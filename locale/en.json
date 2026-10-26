@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Session Cost",
+    "description": "Adds an estimated-cost pill to the composer status bar, split by DeepSeek peak/idle tariff periods, with a per-period token breakdown on click."
+  }
+}

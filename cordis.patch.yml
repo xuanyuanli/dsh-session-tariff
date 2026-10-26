@@ -1,0 +1,9 @@
+- insert:
+    - id: session-cost
+      name: dsh-plugin-session-cost
+      # Optional tariff overrides; drop this block to use the values in host.js.
+      # config:
+      #   utcOffsetMinutes: 480
+      #   peakWindows: ['09:00-12:00', '14:00-18:00']
+      #   holidays: ['2026-10-01']
+      #   workdays: ['2026-10-10']

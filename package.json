@@ -1,0 +1,52 @@
+{
+  "name": "dsh-plugin-session-cost",
+  "version": "1.0.0",
+  "description": "DSH plugin: estimated session cost in the composer status bar, split by DeepSeek peak/idle tariff periods",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "cost",
+    "usage",
+    "pricing"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "exports": {
+    ".": "./host.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "host.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "test/*.mjs"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/xuanyuanli/dsh-plugin-session-cost.git"
+  },
+  "homepage": "https://github.com/xuanyuanli/dsh-plugin-session-cost#readme",
+  "bugs": {
+    "url": "https://github.com/xuanyuanli/dsh-plugin-session-cost/issues"
+  },
+  "scripts": {
+    "test": "node test/fold.test.mjs"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  }
+}
