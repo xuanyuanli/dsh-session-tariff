@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-tariff",
   "version": "1.1.0",
-  "description": "DSH plugin: estimated session cost in the composer status bar, split by DeepSeek peak/idle tariff periods · 在输入框状态栏显示本会话估算花费，按高峰/空闲时段分档计价，点开可看各时段明细",
+  "description": "在输入框状态栏显示本会话估算花费，按高峰/空闲时段分档计价，点开可看各时段明细 · DSH plugin: estimated session cost in the composer status bar, split by DeepSeek peak/idle tariff periods",
   "keywords": [
     "dsh",
     "dsh-plugin",
