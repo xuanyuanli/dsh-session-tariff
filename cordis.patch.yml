@@ -1,6 +1,6 @@
 - insert:
-    - id: session-cost
-      name: dsh-plugin-session-cost
+    - id: session-tariff
+      name: dsh-session-tariff
       # Optional tariff overrides; drop this block to use the values in host.js.
       # config:
       #   utcOffsetMinutes: 480

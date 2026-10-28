@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-	id: 'dsh-plugin-session-cost',
+	id: 'dsh-session-tariff',
 	factory(require) {
 		const React = require('react')
 		const ReactDOM = require('react-dom')
@@ -12,13 +12,19 @@ window.__ModuleLoader__.load({
 
 		/**
 		 * Unit prices in CNY per one million tokens, split by tariff period.
-		 * These are display-side defaults: override `config.pricing` on the bundle
-		 * row, or edit this constant, when the published list differs.
+		 * Checked against the official DeepSeek list (2026-10): deepseek-flash
+		 * idle 0.02 / 1 / 4, peak 0.04 / 2 / 8 — peak is exactly twice idle.
+		 * DeepSeek has no separate cache-write price (writes land in the uncached
+		 * bucket), so `cacheWrite` defaults to the miss rate, which is also what
+		 * providers that report writes separately charge. These are display-side
+		 * defaults: override `config.pricing` on the bundle row, or edit this
+		 * constant, when the published list differs or the session ran on
+		 * deepseek-v4-pro (idle 0.15 / 4.5 / 13.5, peak 0.30 / 9 / 27).
 		 */
 		const DEFAULT_PRICING = {
 			currency: '¥',
-			idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 0, output: 4 },
-			peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 0, output: 8 }
+			idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 },
+			peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 2, output: 8 }
 		}
 
 		/** Per-bucket detail rows, in billing order. */
@@ -334,8 +340,8 @@ window.__ModuleLoader__.load({
 
 		function insertStyles() {
 			const tag = document.createElement('style')
-			tag.dataset.plugin = 'dsh-plugin-session-cost'
-			tag.dataset.pluginCss = 'dsh-plugin-session-cost/dock-cost.css'
+			tag.dataset.plugin = 'dsh-session-tariff'
+			tag.dataset.pluginCss = 'dsh-session-tariff/dock-cost.css'
 			tag.textContent = CSS
 			document.head.appendChild(tag)
 			return () => {

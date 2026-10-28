@@ -1,6 +1,6 @@
 {
-  "name": "dsh-plugin-session-cost",
-  "version": "1.0.0",
+  "name": "dsh-session-tariff",
+  "version": "1.1.0",
   "description": "DSH plugin: estimated session cost in the composer status bar, split by DeepSeek peak/idle tariff periods",
   "keywords": [
     "dsh",
@@ -8,7 +8,8 @@
     "deepseek-harness",
     "cost",
     "usage",
-    "pricing"
+    "pricing",
+    "tariff"
   ],
   "license": "MIT",
   "type": "module",
@@ -28,14 +29,20 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/xuanyuanli/dsh-plugin-session-cost.git"
+    "url": "git+https://github.com/xuanyuanli/dsh-session-tariff.git"
   },
-  "homepage": "https://github.com/xuanyuanli/dsh-plugin-session-cost#readme",
+  "homepage": "https://github.com/xuanyuanli/dsh-session-tariff#readme",
   "bugs": {
-    "url": "https://github.com/xuanyuanli/dsh-plugin-session-cost/issues"
+    "url": "https://github.com/xuanyuanli/dsh-session-tariff/issues"
   },
   "scripts": {
     "test": "node test/fold.test.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": "^0.2.1-rc.2"
   },
   "dsh": {
     "bundle": {

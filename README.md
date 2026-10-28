@@ -1,4 +1,4 @@
-# dsh-plugin-session-cost
+# dsh-session-tariff
 
 给 [DSH（DeepSeek Harness）](https://github.com/deepseek-ai/deepseek-harness) Web GUI 的输入框状态栏加一个「本会话花费」胶囊：按 DeepSeek 的**高峰 / 空闲**两档价分别计价，点开可看到每个时段的缓存读取、未缓存输入、缓存写入、输出各自的 token 数与金额。
 
@@ -85,18 +85,24 @@ session/* 事件流
 
 ## 安装
 
-前置：一个可用的 DSH（Desktop 或带 profile 启动的 `dsh`），插件按 profile 安装，对该 profile 下所有会话生效。
+前置：一个可用的 DSH（Desktop 或带 profile 启动的 `dsh`），插件按 profile 安装，对该 profile 下所有会话生效。声明的兼容范围是 `@deepseek-ai/dsh` `^0.2.1-rc.2`（实测于 `0.2.1-rc.3`）；更早的 0.1.x 没有 `sessionProjections` 服务，装不上也不用装。
 
-### 方式一：让 DSH 助手安装（推荐）
+### 方式一：npm 安装（发布后可用）
+
+```bash
+dsh plugin add dsh-session-tariff
+```
+
+### 方式二：让 DSH 助手从源码安装（推荐，当前可用）
 
 在本仓库或任意 DSH 会话里对它说：
 
-> 把这个插件装到当前 profile：`https://github.com/xuanyuanli/dsh-plugin-session-cost`，克隆到本地后用 `plugin_manager install_bundle` 安装那个目录。
+> 把这个插件装到当前 profile：`https://github.com/xuanyuanli/dsh-session-tariff`，克隆到本地后用 `plugin_manager install_bundle` 安装那个目录。
 
-### 方式二：手动 clone 后安装
+### 方式三：手动 clone 后安装
 
 ```bash
-git clone https://github.com/xuanyuanli/dsh-plugin-session-cost.git
+git clone https://github.com/xuanyuanli/dsh-session-tariff.git
 ```
 
 然后在 DSH 里让助手对该目录执行 `plugin_manager` 的 `install_bundle`（目标为绝对路径），或在插件页安装本地目录。
@@ -106,7 +112,7 @@ git clone https://github.com/xuanyuanli/dsh-plugin-session-cost.git
 - **客户端半**（胶囊与对话框）刷新页面即可生效（必要时 `Ctrl+Shift+R`）
 - **宿主半**（`sessionCost` 投影）在 DSH 进程内注册；从旧版本升级宿主代码时，需要重启 DSH 才能装载新的模块
 
-卸载：让助手执行 `plugin_manager remove_bundle dsh-plugin-session-cost`。
+卸载：让助手执行 `plugin_manager remove_bundle dsh-session-tariff`（用 npm 装的则 `dsh plugin remove dsh-session-tariff`）。
 
 ## 配置
 
@@ -117,8 +123,8 @@ git clone https://github.com/xuanyuanli/dsh-plugin-session-cost.git
 ```js
 const DEFAULT_PRICING = {
   currency: '¥',
-  idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 0, output: 4 },
-  peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 0, output: 8 }
+  idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 },
+  peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 2, output: 8 }
 }
 ```
 
@@ -126,16 +132,20 @@ const DEFAULT_PRICING = {
 
 ```yaml
 - insert:
-    - id: session-cost
-      name: dsh-plugin-session-cost
+    - id: session-tariff
+      name: dsh-session-tariff
       config:
         pricing:
           currency: '¥'
-          idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 0, output: 4 }
-          peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 0, output: 8 }
+          idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
+          peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 2, output: 8 }
 ```
 
-> **默认单价请自行核对。** 仓库里的数字来自公开报道的 flash 档价（空闲价，高峰为两倍），不是官方 API 返回的账单金额；价目调整后改这里即可。
+> **价目来源。** 上面这组数字是 DeepSeek 官方《[模型 & 价格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)》页（2026-10 核对）的 `deepseek-flash` 档：空闲 0.02 / 1 / 4，高峰 0.04 / 2 / 8，高峰正好是空闲的两倍。三个注意点：
+>
+> - `cacheWrite` 默认取**未命中价**：DeepSeek 没有单独的缓存写入价（写入的 token 落在未命中桶里），对会单独上报写入量的 provider 来说，按未命中价计也最接近账单。会话里 `cacheWriteTokens` 恒为 0 时这一项自然为 0。
+> - 会话若跑在 `deepseek-v4-pro` 上，把 idle 改成 `0.15 / 4.5 / 13.5`、peak 改成 `0.30 / 9 / 27`，否则会低报约 3–7 倍。
+> - 价目是会变的，它不是从 API 实时取的，改价后自己更新这里或 `config.pricing`。
 
 ### 时段规则（宿主）
 
@@ -164,23 +174,34 @@ const DEFAULT_PRICING = {
 
 - 运行时对账：某个 `deepseek-flash` 会话（144 次请求）的 `sessionCost` 两档合计与同会话 `tokenUsage` 合计**逐项相等**——缓存读取 17,137,024 / 未缓存输入 131,962 / 输出 87,763——说明既没有重复计费也没有漏计。
 
+- 价目核对：2026-10 对照官方[《模型 & 价格》](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)，`deepseek-flash` 空闲 0.02 / 1 / 4、高峰 0.04 / 2 / 8 与默认值逐项一致；高峰为工作日 09:00-12:00 / 14:00-18:00，其余含周末与法定节假日全天按空闲计，也与官方脚注一致。
+
 - 视觉部分（胶囊位置、对话框排版）在 DSH 桌面版中人工确认；本项目没有浏览器自动化测试。
 
 ## 已知限制
 
-- 法定节假日 / 调休表需要自己维护，默认空表
-- 单价是配置值，不是实时价目；模型不同价目要自己配
+- 价目是 `deepseek-flash` 的一档静态值：`deepseek-v4-pro` 需自行覆盖 `config.pricing`（见「单价」）
+- 法定节假日 / 调休表需要自己维护，默认空表；周末本身已按空闲处理
 - 时段归属按请求**发起**时刻；跨越 12:00 或 18:00 边界的长请求整体计入发起时段的价
 - 只统计 provider 上报了 usage 的请求；被中断且无 usage 的请求不计
 - 明细行金额四舍五入到 3 位，与时段合计可能差 ±0.001
-- 仅适用于 DSH Web GUI 的 `conversation.composer.dock` 位置；宿主键名 `sessionCost` 为全局唯一，若与其他插件冲突会注册失败
+- 仅适用于 DSH Web GUI 的 `conversation.composer.dock` 位置；宿主投影键名 `sessionCost` 为全局唯一，若与其他插件冲突会注册失败
+
+## 兼容性
+
+| 项 | 值 |
+| --- | --- |
+| 声明范围 | `@deepseek-ai/dsh` `^0.2.1-rc.2`（`package.json` 的 `peerDependencies`） |
+| 实测版本 | `0.2.1-rc.3`（DSH 桌面版） |
+| 依赖面 | 无运行时依赖：宿主半只用 `sessionProjections` 服务，客户端半只从模块表取 `react` / `react-dom` |
+| 宿主键名 | cordis 插件 `session-tariff`，投影 `sessionCost` |
 
 ## 目录结构
 
 ```
-dsh-plugin-session-cost/
+dsh-session-tariff/
 ├── package.json           # bundle 清单：dsh.bundle.patch + dsh.client（Web 客户端半）
-├── cordis.patch.yml       # 插入 session-cost 这一行（含配置示例）
+├── cordis.patch.yml       # 插入 session-tariff 这一行（含配置示例）
 ├── host.js                # 宿主半：注册 sessionCost 会话投影（折叠 + 时段归类）
 ├── client.js              # 客户端半：状态栏胶囊与明细对话框（React，无构建）
 ├── locale/{zh,en}.json    # 插件在插件页显示的标题与描述

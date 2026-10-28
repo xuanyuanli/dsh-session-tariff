@@ -1,5 +1,5 @@
 /**
- * Host half of the session-cost bundle.
+ * Host half of the session-tariff bundle.
  *
  * Registers the `sessionCost` session projection: it folds durable provider usage
  * per model request and classifies each request by the tariff period it started
@@ -14,7 +14,7 @@
  */
 
 /** Cordis plugin name. */
-export const name = 'session-cost'
+export const name = 'session-tariff'
 
 /** The projection registry is this plugin's whole purpose. */
 export const inject = ['sessionProjections']
