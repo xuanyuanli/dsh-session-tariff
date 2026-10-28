@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-tariff",
   "version": "1.1.0",
-  "description": "DSH plugin: estimated session cost in the composer status bar, split by DeepSeek peak/idle tariff periods",
+  "description": "DSH plugin: estimated session cost in the composer status bar, split by DeepSeek peak/idle tariff periods · 在输入框状态栏显示本会话估算花费，按高峰/空闲时段分档计价，点开可看各时段明细",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -25,7 +25,10 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "test/*.mjs"
+    "test/*.mjs",
+    "README.en.md",
+    "README.ja.md",
+    "README.zh-TW.md"
   ],
   "repository": {
     "type": "git",

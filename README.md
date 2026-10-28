@@ -1,5 +1,7 @@
 # dsh-session-tariff
 
+**简体中文** · [English](README.en.md) · [日本語](README.ja.md) · [繁體中文](README.zh-TW.md)
+
 给 [DSH（DeepSeek Harness）](https://github.com/deepseek-ai/deepseek-harness) Web GUI 的输入框状态栏加一个「本会话花费」胶囊：按 DeepSeek 的**高峰 / 空闲**两档价分别计价，点开可看到每个时段的缓存读取、未缓存输入、缓存写入、输出各自的 token 数与金额。
 
 > A DSH plugin that shows the estimated monetary cost of the current session beside the composer status pills, split by DeepSeek peak/idle tariff periods. Click the pill for a per-period, per-bucket token and amount breakdown.
