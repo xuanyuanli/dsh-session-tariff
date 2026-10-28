@@ -85,7 +85,7 @@ session/* 事件流
 
 ## 安装
 
-前置：一个可用的 DSH（Desktop 或带 profile 启动的 `dsh`），插件按 profile 安装，对该 profile 下所有会话生效。声明的兼容范围是 `@deepseek-ai/dsh` `^0.2.1-rc.2`（实测于 `0.2.1-rc.3`）；更早的 0.1.x 没有 `sessionProjections` 服务，装不上也不用装。
+前置：一个可用的 DSH（Desktop 或带 profile 启动的 `dsh`），插件按 profile 安装，对该 profile 下所有会话生效。声明的兼容范围是 `@deepseek-ai/dsh` `^0.2.1-rc.2`，实测于 `0.2.1-rc.3`；0.1.x 的客户端 slot / 投影 API 与 0.2 不同，没有测过。
 
 ### 方式一：npm 安装（发布后可用）
 
