@@ -104,8 +104,43 @@ window.__ModuleLoader__.load({
 			'.scost-noteLine+.scost-noteLine{margin-top:2px}'
 		].join('\n')
 
+		/**
+		 * Unit prices. The Host publishes the configured list over the projection
+		 * because the DSH client module loader creates plugin entries with
+		 * `{ name }` only, so `apply(ctx, config)` receives no `config` here and
+		 * `resolvePricing(config)` always sees `undefined`. DEFAULT_PRICING is
+		 * therefore only the last resort for a Host that published nothing.
+		 */
 		let pricing = DEFAULT_PRICING
 		let fallbackT = (key, params) => interpolate(ZH[key] === undefined ? key : ZH[key], params)
+
+		/**
+		 * Adopt the Host-published pricing once it is available. Published values
+		 * win outright; the local defaults stay only when nothing was published.
+		 * @param published - the projection's `pricing` block, possibly undefined.
+		 */
+		function adoptPublishedPricing(published) {
+			if (published === null || typeof published !== 'object') return
+			const table = published.models !== null && typeof published.models === 'object' && !Array.isArray(published.models)
+				? published.models
+				: {}
+			const models = {}
+			for (const key of Object.keys(table)) {
+				const entry = table[key]
+				if (entry === null || typeof entry !== 'object') continue
+				models[key] = {
+					idle: resolveRates(entry.idle, DEFAULT_PRICING.idle),
+					peak: resolveRates(entry.peak, DEFAULT_PRICING.peak)
+				}
+			}
+			pricing = {
+				currency: typeof published.currency === 'string' && published.currency.length > 0 ? published.currency : DEFAULT_PRICING.currency,
+				defaultModel: typeof published.defaultModel === 'string' && published.defaultModel.length > 0 ? published.defaultModel : undefined,
+				idle: resolveRates(published.idle, DEFAULT_PRICING.idle),
+				peak: resolveRates(published.peak, DEFAULT_PRICING.peak),
+				models
+			}
+		}
 
 		function interpolate(text, params) {
 			if (params === undefined || params === null) return text
@@ -280,6 +315,10 @@ window.__ModuleLoader__.load({
 			const projected = useProjection('sessionCost')
 			const aggregate = useProjection('tokenUsage')
 			const seat = useDialogSeat()
+
+			// The Host owns the configured price list; adopt it before pricing so a
+			// configured provider never bills at the built-in DeepSeek defaults.
+			adoptPublishedPricing(projected === undefined || projected === null ? undefined : projected.pricing)
 
 			// Groups are (model, period) pairs so each row is priced at the rates of
 			// the model that served it. Models with no per-model table fall back to

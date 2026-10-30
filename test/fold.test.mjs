@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { createSessionCostDefinition, classifyPeriod, modelOf } from '../host.js'
+import { createSessionCostDefinition, classifyPeriod, modelOf, resolvePricing, DEFAULT_PRICING } from '../host.js'
 
 const CST = 8 * 60 * 60 * 1000
 const at = (iso) => Date.parse(iso)
@@ -90,9 +90,12 @@ assert.equal(restored.peak.outputTokens, 50)
 
 // Wire view parses and stays JSON-serializable.
 const wire = definition.wire.viewSchema.parse(view)
-assert.deepEqual(Object.keys(wire).sort(), ['idle', 'models', 'peak', 'peakWindows', 'weekends'])
+assert.deepEqual(Object.keys(wire).sort(), ['idle', 'models', 'peak', 'peakWindows', 'pricing', 'weekends'])
 // The default rules leave the weekend policy implicit as DeepSeek's 'idle'.
 assert.equal(wire.weekends, 'idle')
+// A definition built without pricing publishes nothing, so the Client keeps its
+// own copy instead of being told every rate is zero.
+assert.equal(wire.pricing, undefined)
 assert.ok(typeof JSON.stringify(wire) === 'string')
 
 // The registry contract: a sync view, validated by viewSchema on every publish.
@@ -175,5 +178,70 @@ assert.equal(modelView.models[0].peak.requests, 1)
 const legacy = modelDefinition.stateSchema.parse({ idle: modelView.idle, peak: modelView.peak, openStep: null, last: null })
 assert.deepEqual(legacy.models, {})
 assert.equal(legacy.openModel, null)
+
+// ---------------------------------------------------------------------------
+// Pricing must reach the Client. The DSH client module loader creates plugin
+// entries with `{ name }` only, so `apply(ctx, config)` never receives the
+// loader row's config in the browser; the Host therefore republishes the
+// configured prices on the projection. Without this, a Bailian setup silently
+// bills at the built-in DeepSeek rates.
+const bailianConfig = {
+	peakWindows: ['08:00-22:00'],
+	weekends: 'clock',
+	pricing: {
+		currency: '¥',
+		defaultModel: 'deepseek-v4.1-flash-1017',
+		idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 },
+		peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 },
+		models: {
+			'deepseek-v4.1-flash-1017': {
+				idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 },
+				peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+			},
+			'ZHIPU/GLM-5.3': {
+				idle: { cacheHit: 2, cacheMiss: 8, cacheWrite: 8, output: 28 },
+				peak: { cacheHit: 2, cacheMiss: 8, cacheWrite: 8, output: 28 }
+			}
+		}
+	}
+}
+
+// The host half reads the row's config, so the resolved prices must appear on
+// the wire view the Client consumes.
+const published = resolvePricing(bailianConfig)
+assert.equal(published.idle.cacheHit, 0.1, 'idle cacheHit comes from config')
+assert.equal(published.peak.cacheHit, 0.2, 'peak cacheHit comes from config')
+assert.equal(published.models['ZHIPU/GLM-5.3'].peak.output, 28, 'per-model rate survives')
+
+const pricingDefinition = createSessionCostDefinition({ ...rules, weekends: 'clock' }, published)
+let pricingState = pricingDefinition.init()
+pricingState = pricingDefinition.apply(pricingState, ev('step/start', { turn: 1, step: 1 }, at('2026-10-26T10:00:00+08:00'), 0))
+pricingState = pricingDefinition.apply(pricingState, {
+	type: 'assistant/message',
+	data: { turn: 1, step: 1, usage: { inputTokens: 100, outputTokens: 10 }, stream: [], message: { content: [], source: { model: 'deepseek-v4.1-flash-1017' } } },
+	time: at('2026-10-26T10:00:02+08:00'),
+	seq: 1
+})
+const pricingView = pricingDefinition.wire.viewSchema.parse(pricingDefinition.wire.view(pricingState))
+assert.ok(pricingView.pricing !== undefined, 'pricing is published')
+assert.equal(pricingView.pricing.idle.cacheHit, 0.1, 'published idle cacheHit is 0.1, not the 0.02 default')
+assert.equal(pricingView.pricing.peak.cacheHit, 0.2, 'published peak cacheHit is 0.2, not the 0.04 default')
+assert.equal(pricingView.pricing.models['ZHIPU/GLM-5.3'].idle.cacheHit, 2, 'per-model table travels too')
+
+// Billing the same sample at the published rates must differ from the defaults,
+// which is exactly the 5x cache gap the user hit.
+const M = 1e6
+const cost = (row, r) => (row.cacheReadTokens * r.cacheHit + row.uncachedInputTokens * r.cacheMiss + row.outputTokens * r.output) / M
+const sampleRow = { cacheReadTokens: 17.2e6, uncachedInputTokens: 326.2e3, outputTokens: 60.3e3 }
+const atPublished = cost(sampleRow, pricingView.pricing.peak)
+const atDefault = cost(sampleRow, DEFAULT_PRICING.peak)
+assert.ok(Math.abs(atDefault - 1.82) < 0.01, 'built-in defaults reproduce the wrong ¥1.82, got ' + atDefault.toFixed(2))
+assert.ok(Math.abs(atPublished - 4.57) < 0.01, 'Bailian rates give ¥4.57, got ' + atPublished.toFixed(2))
+
+// Defaults still resolve when no config is present at all (a shipped install).
+const bare = resolvePricing(undefined)
+assert.equal(bare.idle.cacheHit, 0.02)
+assert.equal(bare.peak.cacheHit, 0.04)
+assert.deepEqual(bare.models, {})
 
 console.log('sessionCost projection fold: all assertions passed')

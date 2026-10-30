@@ -73,8 +73,49 @@ const viewSchema = {
 			peak: normalizeRow(view.peak),
 			peakWindows: windows,
 			weekends: view.weekends === 'clock' ? 'clock' : 'idle',
-			models
+			models,
+			pricing: normalizePricingWire(view.pricing)
 		}
+	}
+}
+
+/**
+ * Validate a published pricing block. Unknown or non-numeric rates are dropped
+ * rather than defaulted, so the Client can tell "not published" from "published
+ * as zero" and fall back to its own copy only for what is genuinely missing.
+ * @param value - candidate pricing block.
+ * @returns the pricing block, or undefined when absent.
+ */
+function normalizePricingWire(value) {
+	if (value === null || typeof value !== 'object') return undefined
+	const rates = (row) => {
+		if (row === null || typeof row !== 'object') return undefined
+		const out = {}
+		for (const field of ['cacheHit', 'cacheMiss', 'cacheWrite', 'output']) {
+			const number = Number(row[field])
+			if (Number.isFinite(number) && number >= 0) out[field] = number
+		}
+		return Object.keys(out).length === 4 ? out : undefined
+	}
+	const idle = rates(value.idle)
+	const peak = rates(value.peak)
+	if (idle === undefined || peak === undefined) return undefined
+	const models = {}
+	if (value.models !== null && typeof value.models === 'object' && !Array.isArray(value.models)) {
+		for (const key of Object.keys(value.models)) {
+			const entry = value.models[key]
+			if (entry === null || typeof entry !== 'object') continue
+			const rowIdle = rates(entry.idle)
+			const rowPeak = rates(entry.peak)
+			if (rowIdle !== undefined && rowPeak !== undefined) models[key] = { idle: rowIdle, peak: rowPeak }
+		}
+	}
+	return {
+		currency: typeof value.currency === 'string' && value.currency.length > 0 ? value.currency : '¥',
+		defaultModel: typeof value.defaultModel === 'string' && value.defaultModel.length > 0 ? value.defaultModel : undefined,
+		idle,
+		peak,
+		models
 	}
 }
 
@@ -285,9 +326,12 @@ export function bucketsEqual(left, right) {
 /**
  * Build the `sessionCost` unit for one set of tariff rules.
  * @param rules - resolved tariff rules (captured by the wire view).
+ * @param pricing - resolved unit prices, published with the view so the Client
+ *   half bills from the configured list rather than its own hardcoded copy
+ *   (the Client never receives the loader row's `config`). Omit to publish none.
  * @returns the projection definition.
  */
-export function createSessionCostDefinition(rules) {
+export function createSessionCostDefinition(rules, pricing) {
 	return {
 		key: 'sessionCost',
 		stateVersion: 1,
@@ -369,6 +413,17 @@ export function createSessionCostDefinition(rules) {
 				peak: state.peak,
 				peakWindows: rules.peakWindows,
 				weekends: rules.weekends,
+				pricing: pricing === undefined
+					? undefined
+					: {
+						currency: pricing.currency,
+						defaultModel: pricing.defaultModel,
+						idle: pricing.idle,
+						peak: pricing.peak,
+						models: Object.fromEntries(
+							Object.keys(pricing.models).sort().map((model) => [model, pricing.models[model]])
+						)
+					},
 				models: Object.keys(state.models).sort().map((model) => ({
 					model,
 					idle: state.models[model].idle,
@@ -380,10 +435,76 @@ export function createSessionCostDefinition(rules) {
 }
 
 /**
+ * Normalize one rate row. A missing or non-numeric field keeps the fallback, so
+ * a partial override only has to name the fields it changes.
+ * @param given - candidate rates.
+ * @param fallback - rates to inherit missing fields from.
+ * @returns a complete rate row.
+ */
+function resolveRates(given, fallback) {
+	const source = given !== null && typeof given === 'object' ? given : {}
+	const take = (value, base) => {
+		const number = Number(value)
+		return Number.isFinite(number) && number >= 0 ? number : base
+	}
+	return {
+		cacheHit: take(source.cacheHit, fallback.cacheHit),
+		cacheMiss: take(source.cacheMiss, fallback.cacheMiss),
+		cacheWrite: take(source.cacheWrite, fallback.cacheWrite),
+		output: take(source.output, fallback.output)
+	}
+}
+
+/**
+ * Unit prices, resolved host-side because the Client half never receives the
+ * loader row's `config` (the DSH client module loader creates plugin entries
+ * with `{ name }` only). Prices therefore travel over the projection instead.
+ * These defaults match DeepSeek's published `deepseek-flash` list; any provider
+ * that differs must override them in the bundle row's `config.pricing`.
+ */
+export const DEFAULT_PRICING = {
+	currency: '¥',
+	idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 },
+	peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 2, output: 8 }
+}
+
+/**
+ * Resolve the `config.pricing` block over the defaults.
+ * @param config - the loader row's config.
+ * @returns resolved pricing: currency, default model label, idle/peak rows and
+ *   a per-model table keyed by exact model id.
+ */
+export function resolvePricing(config) {
+	const given = config !== null && typeof config === 'object' && config.pricing !== null && typeof config.pricing === 'object'
+		? config.pricing
+		: {}
+	const flat = { cacheHit: given.cacheHit, cacheMiss: given.cacheMiss, cacheWrite: given.cacheWrite, output: given.output }
+	const idle = resolveRates(given.idle === undefined ? flat : given.idle, resolveRates(flat, DEFAULT_PRICING.idle))
+	const peak = resolveRates(given.peak === undefined ? flat : given.peak, resolveRates(flat, DEFAULT_PRICING.peak))
+	const models = {}
+	const table = given.models !== null && typeof given.models === 'object' && !Array.isArray(given.models) ? given.models : {}
+	for (const key of Object.keys(table)) {
+		const entry = table[key]
+		if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
+		const rowFlat = { cacheHit: entry.cacheHit, cacheMiss: entry.cacheMiss, cacheWrite: entry.cacheWrite, output: entry.output }
+		const rowIdle = resolveRates(entry.idle === undefined ? rowFlat : entry.idle, resolveRates(rowFlat, idle))
+		const rowPeak = entry.peak === undefined ? resolveRates(rowFlat, peak) : resolveRates(entry.peak, resolveRates(rowFlat, peak))
+		models[key] = { idle: rowIdle, peak: rowPeak }
+	}
+	return {
+		currency: typeof given.currency === 'string' && given.currency.length > 0 ? given.currency : DEFAULT_PRICING.currency,
+		defaultModel: typeof given.defaultModel === 'string' && given.defaultModel.length > 0 ? given.defaultModel : undefined,
+		idle,
+		peak,
+		models
+	}
+}
+
+/**
  * Register the unit; the registration is an effect on this plugin's fiber.
  * @param ctx - registrant context carrying the projection registry.
- * @param config - optional tariff-rule overrides from the loader row.
+ * @param config - optional tariff-rule and pricing overrides from the loader row.
  */
 export function apply(ctx, config) {
-	ctx.sessionProjections.register(createSessionCostDefinition(resolveRules(config)))
+	ctx.sessionProjections.register(createSessionCostDefinition(resolveRules(config), resolvePricing(config)))
 }
