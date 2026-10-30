@@ -48,7 +48,9 @@ window.__ModuleLoader__.load({
 			'row.output': '输出',
 			'note.idlePrice': '空闲：命中 {currency}{cacheHit} · 未命中 {currency}{cacheMiss} · 输出 {currency}{output} / 百万 tokens',
 			'note.peakPrice': '高峰：命中 {currency}{cacheHit} · 未命中 {currency}{cacheMiss} · 输出 {currency}{output} / 百万 tokens',
-			'note.rule': '高峰时段为工作日 {windows}；其余时间含周末与法定节假日按空闲计',
+			'note.rule': '高峰时段 {windows}（{dayRule}）；其余时间按空闲计',
+			'note.dayRule.idle': '周末与法定节假日全天按空闲计',
+			'note.dayRule.clock': '周末照常按时段计，周末无优惠',
 			'note.fallback': '尚未取得分时段用量，暂按高峰价估算'
 		}
 
@@ -65,7 +67,9 @@ window.__ModuleLoader__.load({
 			'row.output': 'Output',
 			'note.idlePrice': 'Idle: hit {currency}{cacheHit} · miss {currency}{cacheMiss} · output {currency}{output} per 1M tokens',
 			'note.peakPrice': 'Peak: hit {currency}{cacheHit} · miss {currency}{cacheMiss} · output {currency}{output} per 1M tokens',
-			'note.rule': 'Peak hours are workdays {windows}; every other time, weekends and public holidays bill as idle',
+			'note.rule': 'Peak hours {windows} ({dayRule}); every other time bills as idle',
+			'note.dayRule.idle': 'weekends and public holidays bill idle all day',
+			'note.dayRule.clock': 'weekends follow the same clock with no discount',
 			'note.fallback': 'Per-period usage is not available yet; estimated at peak rates'
 		}
 
@@ -321,6 +325,10 @@ window.__ModuleLoader__.load({
 			const windows = Array.isArray(projected === undefined || projected === null ? undefined : projected.peakWindows)
 				? projected.peakWindows.join(' / ')
 				: ''
+			// The weekend policy is what actually decides whether a Saturday bills
+			// at all, so the note has to describe the policy in force rather than
+			// assume DeepSeek's "weekends are idle".
+			const weekendPolicy = projected !== undefined && projected !== null && projected.weekends === 'clock' ? 'clock' : 'idle'
 
 			const priceLine = (labelKey, rates) => translate(labelKey, {
 				currency: pricing.currency,
@@ -331,7 +339,7 @@ window.__ModuleLoader__.load({
 
 			const notes = [priceLine('note.idlePrice', pricing.idle), priceLine('note.peakPrice', pricing.peak)]
 			if (fallbackNote) notes.push(translate('note.fallback'))
-			else if (windows !== '') notes.push(translate('note.rule', { windows }))
+			else if (windows !== '') notes.push(translate('note.rule', { windows, dayRule: translate('note.dayRule.' + weekendPolicy) }))
 
 			const panel = h('div', {
 				ref: seat.panelRef,

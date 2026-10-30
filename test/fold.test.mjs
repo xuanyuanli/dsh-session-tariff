@@ -90,7 +90,9 @@ assert.equal(restored.peak.outputTokens, 50)
 
 // Wire view parses and stays JSON-serializable.
 const wire = definition.wire.viewSchema.parse(view)
-assert.deepEqual(Object.keys(wire).sort(), ['idle', 'models', 'peak', 'peakWindows'])
+assert.deepEqual(Object.keys(wire).sort(), ['idle', 'models', 'peak', 'peakWindows', 'weekends'])
+// The default rules leave the weekend policy implicit as DeepSeek's 'idle'.
+assert.equal(wire.weekends, 'idle')
 assert.ok(typeof JSON.stringify(wire) === 'string')
 
 // The registry contract: a sync view, validated by viewSchema on every publish.
@@ -153,6 +155,9 @@ assert.equal(glm.idle.outputTokens, 40)
 assert.equal(modelView.peak.uncachedInputTokens, 100)
 assert.equal(modelView.idle.uncachedInputTokens, 400)
 assert.equal(modelView.peak.outputTokens + modelView.idle.outputTokens, 50)
+// The wire view must carry the policy that produced those rows, so the client's
+// explanation matches the arithmetic instead of assuming DeepSeek's rule.
+assert.equal(modelView.weekends, 'clock')
 
 // An attempt that reports usage before the message settles is priced under the
 // model the message then pins, so a single request never splits across models.

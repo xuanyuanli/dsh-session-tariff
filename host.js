@@ -68,7 +68,13 @@ const viewSchema = {
 				.filter((entry) => entry !== null && typeof entry === 'object' && typeof entry.model === 'string' && entry.model.length > 0)
 				.map((entry) => ({ model: entry.model, idle: normalizeRow(entry.idle), peak: normalizeRow(entry.peak) }))
 			: []
-		return { idle: normalizeRow(view.idle), peak: normalizeRow(view.peak), peakWindows: windows, models }
+		return {
+			idle: normalizeRow(view.idle),
+			peak: normalizeRow(view.peak),
+			peakWindows: windows,
+			weekends: view.weekends === 'clock' ? 'clock' : 'idle',
+			models
+		}
 	}
 }
 
@@ -362,6 +368,7 @@ export function createSessionCostDefinition(rules) {
 				idle: state.idle,
 				peak: state.peak,
 				peakWindows: rules.peakWindows,
+				weekends: rules.weekends,
 				models: Object.keys(state.models).sort().map((model) => ({
 					model,
 					idle: state.models[model].idle,
