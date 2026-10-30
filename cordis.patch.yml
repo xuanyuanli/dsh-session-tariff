@@ -1,20 +1,48 @@
 - insert:
     - id: session-tariff
       name: dsh-session-tariff
-      # Optional tariff overrides; drop this block to use the values in host.js.
+      # Optional overrides. Prices and tariff rules ship as built-in books keyed by
+      # the provider id DSH reports on the wire (message.source.provider /
+      # request/context.provider), so a session bills correctly on whichever
+      # provider served it — no edit and no restart when the GUI model changes.
+      #
+      # Built-in providers: 'deepseek-account' (DeepSeek official: deepseek-flash,
+      # deepseek-v4-pro), 'bailian' and 'bailian-chat' (Alibaba Bailian:
+      # deepseek-v4.1-flash-1017, qwen3.8-max, ZHIPU/GLM-5.3-Flash, ZHIPU/GLM-5.3).
+      # Override or add one with `providers`; partial entries inherit field by
+      # field from the provider's preset (or from the flat fields below when the
+      # provider has no preset):
+      #
+      # config:
+      #   providers:
+      #     deepseek-account:
+      #       peakWindows: ['09:00-12:00', '14:00-18:00']
+      #       weekends: idle            # 'idle' (DeepSeek) | 'clock' (no weekend discount)
+      #       pricing:
+      #         idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      #         peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 2, output: 8 }
+      #         models:                 # per-model rates, matched by exact model id
+      #           deepseek-flash:
+      #             idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      #             peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 2, output: 8 }
+      #     bailian:
+      #       peakWindows: ['08:00-22:00']   # 22:00-08:00 is the idle window
+      #       weekends: clock
+      #       pricing:
+      #         idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      #         peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+      #
+      # The top-level (flat) rule and pricing fields are the fallback book for a
+      # provider with no preset and no `providers` entry:
+      #
       # config:
       #   utcOffsetMinutes: 480
       #   peakWindows: ['09:00-12:00', '14:00-18:00']
       #   holidays: ['2026-10-01']
       #   workdays: ['2026-10-10']
-      #   weekends: idle            # 'idle' (DeepSeek) | 'clock' (Bailian and other
-      #                             #   providers that keep weekends at full price)
+      #   weekends: idle
       #   pricing:
       #     currency: '¥'
-      #     defaultModel: deepseek-v4.1-flash-1017   # label when the model is unknown
-      #     idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
-      #     peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
-      #     models:                   # per-model rates, matched by exact model id
-      #       qwen3.8-max:
-      #         idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
-      #         peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+      #     defaultModel: deepseek-flash
+      #     idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      #     peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 2, output: 8 }

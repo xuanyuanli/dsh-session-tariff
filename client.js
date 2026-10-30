@@ -16,15 +16,29 @@ window.__ModuleLoader__.load({
 		 * idle 0.02 / 1 / 4, peak 0.04 / 2 / 8 — peak is exactly twice idle.
 		 * DeepSeek has no separate cache-write price (writes land in the uncached
 		 * bucket), so `cacheWrite` defaults to the miss rate, which is also what
-		 * providers that report writes separately charge. These are display-side
-		 * defaults: override `config.pricing` on the bundle row, or edit this
-		 * constant, when the published list differs or the session ran on
-		 * deepseek-v4-pro (idle 0.15 / 4.5 / 13.5, peak 0.30 / 9 / 27).
+		 * providers that report writes separately charge. This is the last-resort
+		 * book only: the Host publishes a book per provider (`projected.books`),
+		 * and the legacy flat `projected.pricing` is the fallback book for old
+		 * Hosts and for providers with no preset of their own.
 		 */
 		const DEFAULT_PRICING = {
 			currency: '¥',
+			// Kept structurally complete: a book always exposes a `models` map,
+			// even when there is no per-model rate to publish.
+			models: {},
 			idle: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 },
 			peak: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 2, output: 8 }
+		}
+
+		/** The built-in book: what rates fall back to when nothing was published. */
+		const DEFAULT_BOOK = {
+			currency: DEFAULT_PRICING.currency,
+			defaultModel: undefined,
+			peakWindows: [],
+			weekends: 'idle',
+			idle: DEFAULT_PRICING.idle,
+			peak: DEFAULT_PRICING.peak,
+			models: {}
 		}
 
 		/** Per-bucket detail rows, in billing order. */
@@ -51,7 +65,8 @@ window.__ModuleLoader__.load({
 			'note.rule': '高峰时段 {windows}（{dayRule}）；其余时间按空闲计',
 			'note.dayRule.idle': '周末与法定节假日全天按空闲计',
 			'note.dayRule.clock': '周末照常按时段计，周末无优惠',
-			'note.fallback': '尚未取得分时段用量，暂按高峰价估算'
+			'note.fallback': '尚未取得分时段用量，暂按高峰价估算',
+			'note.provider': '{provider}：'
 		}
 
 		const EN = {
@@ -70,7 +85,8 @@ window.__ModuleLoader__.load({
 			'note.rule': 'Peak hours {windows} ({dayRule}); every other time bills as idle',
 			'note.dayRule.idle': 'weekends and public holidays bill idle all day',
 			'note.dayRule.clock': 'weekends follow the same clock with no discount',
-			'note.fallback': 'Per-period usage is not available yet; estimated at peak rates'
+			'note.fallback': 'Per-period usage is not available yet; estimated at peak rates',
+			'note.provider': '{provider}: '
 		}
 
 		const MEASURE_STYLE = { left: 0, top: 0, visibility: 'hidden' }
@@ -94,6 +110,7 @@ window.__ModuleLoader__.load({
 			'.scost-periodName{align-items:center;gap:8px;min-width:0;display:inline-flex}',
 			'.scost-periodRequests{color:var(--dsw-alias-label-secondary);font-weight:400}',
 			'.scost-model{color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+			'.scost-providerTag{color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-bg-layer-2);border-radius:4px;padding:0 4px;font-size:10px;line-height:14px;white-space:nowrap}',
 			'.scost-periodTag{color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);border-radius:4px;padding:0 4px;font-size:10px;line-height:14px}',
 			'.scost-periodValue{font-variant-numeric:tabular-nums;white-space:nowrap}',
 			'.scost-lines{color:var(--dsw-alias-label-secondary);grid-template-columns:auto minmax(0,1fr) auto;gap:2px 12px;margin-top:4px;display:grid;font-variant-numeric:tabular-nums}',
@@ -105,42 +122,14 @@ window.__ModuleLoader__.load({
 		].join('\n')
 
 		/**
-		 * Unit prices. The Host publishes the configured list over the projection
-		 * because the DSH client module loader creates plugin entries with
-		 * `{ name }` only, so `apply(ctx, config)` receives no `config` here and
-		 * `resolvePricing(config)` always sees `undefined`. DEFAULT_PRICING is
-		 * therefore only the last resort for a Host that published nothing.
+		 * The flat book resolved from the loader row's `config`, if any. The DSH
+		 * client module loader creates plugin entries with `{ name }` only, so
+		 * `apply(ctx, config)` normally receives no `config` here; the Host
+		 * publishes the real books on the projection (`projected.books`), and
+		 * this stays only as the legacy fallback book / built-in default.
 		 */
-		let pricing = DEFAULT_PRICING
+		let configured = resolvePricing(undefined)
 		let fallbackT = (key, params) => interpolate(ZH[key] === undefined ? key : ZH[key], params)
-
-		/**
-		 * Adopt the Host-published pricing once it is available. Published values
-		 * win outright; the local defaults stay only when nothing was published.
-		 * @param published - the projection's `pricing` block, possibly undefined.
-		 */
-		function adoptPublishedPricing(published) {
-			if (published === null || typeof published !== 'object') return
-			const table = published.models !== null && typeof published.models === 'object' && !Array.isArray(published.models)
-				? published.models
-				: {}
-			const models = {}
-			for (const key of Object.keys(table)) {
-				const entry = table[key]
-				if (entry === null || typeof entry !== 'object') continue
-				models[key] = {
-					idle: resolveRates(entry.idle, DEFAULT_PRICING.idle),
-					peak: resolveRates(entry.peak, DEFAULT_PRICING.peak)
-				}
-			}
-			pricing = {
-				currency: typeof published.currency === 'string' && published.currency.length > 0 ? published.currency : DEFAULT_PRICING.currency,
-				defaultModel: typeof published.defaultModel === 'string' && published.defaultModel.length > 0 ? published.defaultModel : undefined,
-				idle: resolveRates(published.idle, DEFAULT_PRICING.idle),
-				peak: resolveRates(published.peak, DEFAULT_PRICING.peak),
-				models
-			}
-		}
 
 		function interpolate(text, params) {
 			if (params === undefined || params === null) return text
@@ -179,10 +168,7 @@ window.__ModuleLoader__.load({
 					cacheWrite: entry.cacheWrite,
 					output: entry.output
 				}
-				models[key] = resolveRates(
-					entry.idle === undefined ? rowFlat : entry.idle,
-					resolveRates(rowFlat, idle)
-				)
+				models[key] = { idle: resolveRates(entry.idle === undefined ? rowFlat : entry.idle, resolveRates(rowFlat, idle)) }
 				models[key].peak = entry.peak === undefined
 					? resolveRates(rowFlat, peak)
 					: resolveRates(entry.peak, resolveRates(rowFlat, peak))
@@ -198,11 +184,97 @@ window.__ModuleLoader__.load({
 			}
 		}
 
-		/** Rates for one model: its own table entry, else the session-wide period rates. */
-		function ratesFor(model, periodKey) {
-			const entry = pricing.models[model]
+		/**
+		 * Fill one price book (either a Host-published provider book or the legacy
+		 * flat `projected.pricing`) over `base`. A provider book is authoritative,
+		 * so a missing rate falls back to that book's own period rate and finally
+		 * to the built-in DeepSeek book — never to another provider's flat config.
+		 * @param source - candidate book from the wire view.
+		 * @param base - book to inherit missing currency/rules/rates from.
+		 */
+		function normalizeBook(source, base) {
+			const given = source !== null && typeof source === 'object' ? source : {}
+			const idle = resolveRates(given.idle, base.idle)
+			const peak = resolveRates(given.peak, base.peak)
+			const models = {}
+			const table = given.models !== null && typeof given.models === 'object' && !Array.isArray(given.models) ? given.models : {}
+			for (const key of Object.keys(table)) {
+				const entry = table[key]
+				if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
+				models[key] = {
+					idle: resolveRates(entry.idle, idle),
+					peak: resolveRates(entry.peak, peak)
+				}
+			}
+			const windows = Array.isArray(given.peakWindows)
+				? given.peakWindows.filter((entry) => typeof entry === 'string')
+				: base.peakWindows
+			return {
+				currency: typeof given.currency === 'string' && given.currency.length > 0 ? given.currency : base.currency,
+				defaultModel: typeof given.defaultModel === 'string' && given.defaultModel.length > 0 ? given.defaultModel : base.defaultModel,
+				peakWindows: windows,
+				weekends: given.weekends === 'clock' || given.weekends === 'idle' ? given.weekends : base.weekends,
+				idle,
+				peak,
+				models
+			}
+		}
+
+		function bookFromPricing(pricing) {
+			return {
+				currency: pricing.currency,
+				defaultModel: pricing.defaultModel,
+				peakWindows: [],
+				weekends: 'idle',
+				idle: pricing.idle,
+				peak: pricing.peak,
+				models: pricing.models
+			}
+		}
+
+		/**
+		 * Adopt the Host-published books from `projected.books` (array of provider
+		 * books) and the legacy flat `projected.pricing` as the fallback book. When
+		 * `books` is absent/empty (old Host), the fallback book is the only book, so
+		 * the previous single-book rendering is reproduced exactly.
+		 * @param projected - the `sessionCost` projection value, possibly undefined.
+		 * @returns `{ fallback, books }`, books keyed by provider id.
+		 */
+		function adoptProjection(projected) {
+			const view = projected !== null && typeof projected === 'object' ? projected : undefined
+			const published = view === undefined || view.pricing === null || typeof view.pricing !== 'object' ? undefined : view.pricing
+			const fallback = normalizeBook({
+				currency: published === undefined ? undefined : published.currency,
+				defaultModel: published === undefined ? undefined : published.defaultModel,
+				idle: published === undefined ? undefined : published.idle,
+				peak: published === undefined ? undefined : published.peak,
+				models: published === undefined ? undefined : published.models,
+				// The legacy wire fields describe the fallback book's rules.
+				peakWindows: view === undefined ? undefined : view.peakWindows,
+				weekends: view === undefined ? undefined : view.weekends
+			}, bookFromPricing(configured))
+			const books = new Map()
+			const list = view !== undefined && Array.isArray(view.books) ? view.books : []
+			for (const entry of list) {
+				const provider = entry !== null && typeof entry === 'object' && typeof entry.provider === 'string' && entry.provider.length > 0
+					? entry.provider
+					: undefined
+				if (provider === undefined) continue
+				books.set(provider, normalizeBook(entry, DEFAULT_BOOK))
+			}
+			return { fallback, books }
+		}
+
+		/**
+		 * Rates for one (provider, model, period): the model's own entry, else the
+		 * provider book's period rates, else the built-in DeepSeek book.
+		 */
+		function ratesFor(book, model, periodKey) {
+			const entry = model === undefined ? undefined : book.models[model]
 			const rates = entry === undefined ? undefined : entry[periodKey]
-			return rates === undefined ? pricing[periodKey] : rates
+			return rates === undefined
+				? (book[periodKey] === undefined ? DEFAULT_PRICING[periodKey] : book[periodKey])
+				: rates
 		}
 
 		/** Compact token count: 18.2M, 133.0K, 912. */
@@ -233,6 +305,7 @@ window.__ModuleLoader__.load({
 		}
 
 		function hasTokens(row) {
+			if (row === null || typeof row !== 'object') return false
 			return row.cacheReadTokens + row.uncachedInputTokens + row.cacheWriteTokens + row.outputTokens > 0
 		}
 
@@ -306,9 +379,10 @@ window.__ModuleLoader__.load({
 
 		/**
 		 * Whole-log cost pill: estimated spend split by tariff period, opening a
-		 * per-period breakdown. Reads the host `sessionCost` projection; when a
+		 * per-(provider, model, period) breakdown. Reads the host `sessionCost`
+		 * projection (provider-aware books plus per-provider usage rows); when a
 		 * running Host has not registered it yet, falls back to the aggregate
-		 * `tokenUsage` buckets priced at peak rates.
+		 * `tokenUsage` buckets priced at the fallback book's peak rates.
 		 */
 		function CostPill({ useProjection, t }) {
 			const translate = typeof t === 'function' ? t : fallbackT
@@ -316,38 +390,46 @@ window.__ModuleLoader__.load({
 			const aggregate = useProjection('tokenUsage')
 			const seat = useDialogSeat()
 
-			// The Host owns the configured price list; adopt it before pricing so a
-			// configured provider never bills at the built-in DeepSeek defaults.
-			adoptPublishedPricing(projected === undefined || projected === null ? undefined : projected.pricing)
+			// The Host owns the configured price books; adopt them before pricing so
+			// a provider never bills at another provider's rates.
+			const adopted = adoptProjection(projected)
+			const books = adopted.books
+			const fallbackBook = adopted.fallback
+			const bookFor = (provider) => (provider !== undefined && books.has(provider) ? books.get(provider) : fallbackBook)
 
-			// Groups are (model, period) pairs so each row is priced at the rates of
-			// the model that served it. Models with no per-model table fall back to
-			// the session-wide idle/peak rates.
+			// Groups are (provider, model, period) triples so each row is priced at
+			// the rates of the provider and model that served it. A provider with no
+			// published book (old logs: provider undefined) uses the fallback book.
 			const groups = []
 			let fallbackNote = false
-			const push = (model, key, row) => {
+			const push = (provider, model, key, row) => {
 				if (!hasTokens(row)) return
+				const book = bookFor(provider)
 				groups.push({
+					provider,
 					model,
 					key,
 					row,
-					rates: ratesFor(model, key),
+					book,
+					rates: ratesFor(book, model, key),
 					label: translate('period.' + key)
 				})
 			}
-			const perModel = Array.isArray(projected === undefined || projected === null ? undefined : projected.models)
+			const perModel = projected !== undefined && projected !== null && Array.isArray(projected.models)
 				? projected.models
 				: []
 			if (projected !== undefined && projected !== null && perModel.length > 0) {
 				for (const entry of perModel) {
-					push(entry.model, 'idle', entry.idle)
-					push(entry.model, 'peak', entry.peak)
+					const provider = typeof entry.provider === 'string' && entry.provider.length > 0 ? entry.provider : undefined
+					const model = typeof entry.model === 'string' && entry.model.length > 0 ? entry.model : undefined
+					push(provider, model, 'idle', entry.idle)
+					push(provider, model, 'peak', entry.peak)
 				}
 			} else if (projected !== undefined && projected !== null) {
-				push(pricing.defaultModel, 'idle', projected.idle)
-				push(pricing.defaultModel, 'peak', projected.peak)
+				push(undefined, fallbackBook.defaultModel, 'idle', projected.idle)
+				push(undefined, fallbackBook.defaultModel, 'peak', projected.peak)
 			} else if (aggregate !== undefined && aggregate !== null && hasTokens(aggregate)) {
-				push(pricing.defaultModel, 'peak', aggregate)
+				push(undefined, fallbackBook.defaultModel, 'peak', aggregate)
 				fallbackNote = true
 			}
 			if (groups.length === 0) return null
@@ -359,26 +441,53 @@ window.__ModuleLoader__.load({
 			}
 			if (!(total > 0)) return null
 
-			const totalText = money(total, pricing.currency)
+			// Provider order follows the wire order (the Host sorts provider ids, with
+			// an undefined provider last). Only a multi-provider bill gets tags and
+			// provider-prefixed note lines; a single-provider bill stays untouched.
+			const providers = []
+			const seenProviders = new Set()
+			for (const group of groups) {
+				const key = group.provider === undefined ? '\u0000' : group.provider
+				if (seenProviders.has(key)) continue
+				seenProviders.add(key)
+				providers.push(group.provider)
+			}
+			const multiProvider = providers.length > 1
+			const currency = fallbackBook.currency
+			const totalText = money(total, currency)
 			const label = '≈' + totalText
-			const windows = Array.isArray(projected === undefined || projected === null ? undefined : projected.peakWindows)
-				? projected.peakWindows.join(' / ')
-				: ''
-			// The weekend policy is what actually decides whether a Saturday bills
-			// at all, so the note has to describe the policy in force rather than
-			// assume DeepSeek's "weekends are idle".
-			const weekendPolicy = projected !== undefined && projected !== null && projected.weekends === 'clock' ? 'clock' : 'idle'
 
-			const priceLine = (labelKey, rates) => translate(labelKey, {
-				currency: pricing.currency,
+			const priceLine = (labelKey, rates, bookCurrency) => translate(labelKey, {
+				currency: bookCurrency,
 				cacheHit: String(rates.cacheHit),
 				cacheMiss: String(rates.cacheMiss),
 				output: String(rates.output)
 			})
 
-			const notes = [priceLine('note.idlePrice', pricing.idle), priceLine('note.peakPrice', pricing.peak)]
-			if (fallbackNote) notes.push(translate('note.fallback'))
-			else if (windows !== '') notes.push(translate('note.rule', { windows, dayRule: translate('note.dayRule.' + weekendPolicy) }))
+			// One note block per provider present in the bill, each from that
+			// provider's own book: its rates, peak windows and weekend policy. The
+			// legacy aggregate path keeps the old "estimated at peak rates" block.
+			const notes = []
+			for (const provider of providers) {
+				const book = bookFor(provider)
+				const lines = [
+					priceLine('note.idlePrice', book.idle, book.currency),
+					priceLine('note.peakPrice', book.peak, book.currency)
+				]
+				if (fallbackNote) {
+					lines.push(translate('note.fallback'))
+				} else {
+					const windows = book.peakWindows.join(' / ')
+					if (windows !== '') {
+						lines.push(translate('note.rule', { windows, dayRule: translate('note.dayRule.' + book.weekends) }))
+					}
+				}
+				// Rows from older Hosts carry no provider; they have no id to tag.
+				const prefix = multiProvider && provider !== undefined
+					? translate('note.provider', { provider })
+					: ''
+				for (const line of lines) notes.push(prefix + line)
+			}
 
 			const panel = h('div', {
 				ref: seat.panelRef,
@@ -391,15 +500,23 @@ window.__ModuleLoader__.load({
 					h('span', { className: PREFIX + '-titleLabel' }, h(CostIcon), translate('dialog.title')),
 					h('span', { className: PREFIX + '-titleValue' }, totalText)),
 				h('div', { className: PREFIX + '-rule', 'aria-hidden': true }),
-				groups.map((group) => h('div', { key: group.model + '|' + group.key, className: PREFIX + '-period' },
+				groups.map((group) => h('div', {
+					key: (group.provider === undefined ? '' : group.provider) + '\u0000' + (group.model === undefined ? '' : group.model) + '\u0000' + group.key,
+					className: PREFIX + '-period'
+				},
 					h('div', { className: PREFIX + '-periodHead' },
 						h('span', { className: PREFIX + '-periodName' },
 							group.model === undefined ? group.label : h('span', { className: PREFIX + '-model', title: group.model }, group.model),
+							group.model === undefined
+								? null
+								: multiProvider && group.provider !== undefined
+									? h('span', { className: PREFIX + '-providerTag' }, group.provider)
+									: null,
 							group.model === undefined ? null : h('span', { className: PREFIX + '-periodTag' }, group.label),
 							group.row.requests > 0
 								? h('span', { className: PREFIX + '-periodRequests' }, translate('period.requests', { count: group.row.requests }))
 								: null),
-						h('span', { className: PREFIX + '-periodValue' }, money(group.amount, pricing.currency))),
+						h('span', { className: PREFIX + '-periodValue' }, money(group.amount, currency))),
 					h('div', { className: PREFIX + '-lines' }, ROW_SPECS.flatMap((spec) => {
 						const tokens = group.row[spec.field]
 						if (!(tokens > 0)) return []
@@ -413,7 +530,7 @@ window.__ModuleLoader__.load({
 							h('div', {
 								key: spec.key + '-value',
 								className: PREFIX + '-lineValue'
-							}, money(tokens * group.rates[spec.rate] / MILLION, pricing.currency))
+							}, money(tokens * group.rates[spec.rate] / MILLION, currency))
 						]
 					})))),
 				h('div', { className: PREFIX + '-note' }, notes.map((line, index) => h('div', {
@@ -453,7 +570,7 @@ window.__ModuleLoader__.load({
 		return {
 			inject: ['slots', 'locale'],
 			apply(ctx, config) {
-				pricing = resolvePricing(config)
+				configured = resolvePricing(config)
 				ctx.effect(() => ctx.locale.register(NS, { zh: ZH, en: EN }), 'session-cost: dictionaries')
 				fallbackT = ctx.locale.bind(NS)
 				ctx.effect(insertStyles, 'session-cost: styles')
