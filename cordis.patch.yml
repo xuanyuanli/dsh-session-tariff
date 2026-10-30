@@ -7,3 +7,14 @@
       #   peakWindows: ['09:00-12:00', '14:00-18:00']
       #   holidays: ['2026-10-01']
       #   workdays: ['2026-10-10']
+      #   weekends: idle            # 'idle' (DeepSeek) | 'clock' (Bailian and other
+      #                             #   providers that keep weekends at full price)
+      #   pricing:
+      #     currency: '¥'
+      #     defaultModel: deepseek-v4.1-flash-1017   # label when the model is unknown
+      #     idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      #     peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+      #     models:                   # per-model rates, matched by exact model id
+      #       qwen3.8-max:
+      #         idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      #         peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }

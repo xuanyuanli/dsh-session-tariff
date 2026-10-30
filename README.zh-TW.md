@@ -52,12 +52,13 @@ DSH 內建的 `tokenUsage` 投影只提供整體聚合桶，**沒有時間維度
 session/* 事件流
    ├─ step/start            → 記錄本次請求的發起時刻
    ├─ assistant/attempt     → 串流上報的 usage（隨後會被同一請求的 message 覆蓋）
-   ├─ assistant/message     → 該請求的最終 usage，依發起時刻歸入 idle / peak
+   ├─ assistant/message     → 該請求的最終 usage，依發起時刻歸入 idle / peak，
+   │                          並依 message.source.model 歸入該模型的獨立帳本
    └─ llm/retry-started     → 關閉覆蓋槽，重試算作第二次請求
         ↓
-   sessionCost 投影 → { idle: {…}, peak: {…}, peakWindows }
+   sessionCost 投影 → { idle: {…}, peak: {…}, peakWindows, models: [{ model, idle, peak }] }
         ↓
-   膠囊 + 明細對話框
+   膠囊 + 明細對話框（依「模型 × 時段」分行，每行用該模型自己的單價）
 ```
 
 ### 計價口徑
@@ -149,6 +150,60 @@ const DEFAULT_PRICING = {
 > - 若工作階段跑在 `deepseek-v4-pro`，把 idle 改成 `0.15 / 4.5 / 13.5`、peak 改成 `0.30 / 9 / 27`，否則會少報約 3–7 倍。
 > - 費率會變動，且不是即時從 API 取得，改價後請自行更新這裡或 `config.pricing`。
 
+#### 依模型定價
+
+一個工作階段可能跑多個模型（多 provider、切換模型、子代理），它們的單價往往不同。在 `pricing.models` 下依 **model id 精確比對**建表，每一項可各自覆寫 `idle` / `peak`；沒列出的模型回落到最上層的 `idle` / `peak`：
+
+```yaml
+- id: session-tariff
+  name: dsh-session-tariff
+  config:
+    pricing:
+      currency: '¥'
+      defaultModel: deepseek-v4.1-flash-1017   # 取不到 model id 時的顯示名稱
+      idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+      models:
+        deepseek-v4.1-flash-1017:
+          idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+          peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+        qwen3.8-max:
+          idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+          peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+```
+
+model id 取自每筆 `assistant/message` 的 `message.source.model`，因此和 DSH 送給 provider 的 id 完全一致（像 `ZHIPU/GLM-5.3` 這種含斜線的名稱，在 YAML 裡加引號即可）。明細面板會依「模型 × 時段」分行，每行用該模型自己的費率結算。
+
+#### 範例：阿里雲百煉（Bailian）
+
+百煉的口徑和 DeepSeek 有兩處根本不同（以 `deepseek-v4.1-flash-1017` 為例）：
+
+| | DeepSeek 官方 | 百煉 |
+|---|---|---|
+| 離峰時段 | 沒有全域離峰帶，只有平日的高峰窗 | **UTC+8 22:00–翌日 08:00 為離峰，其餘全部尖峰** |
+| 週末 | 全天按離峰計 | **沒有優惠，照常按尖峰** |
+| 快取命中 | 0.02 / 0.04 | **0.1 / 0.2** |
+
+外掛的 `peakWindows` 無法表達跨午夜的區間（`22:00-24:00` 這種寫法不生效），所以要用**反向填寫**：把白天寫成尖峰窗，並讓週末也依時鐘判定。
+
+```yaml
+- id: session-tariff
+  name: dsh-session-tariff
+  config:
+    utcOffsetMinutes: 480
+    peakWindows: ['08:00-22:00']   # 百煉：22:00–08:00 之外全是尖峰
+    weekends: clock                 # 週末依時鐘算，而不是整天離峰
+    holidays: []
+    workdays: []
+    pricing:
+      currency: '¥'
+      defaultModel: deepseek-v4.1-flash-1017
+      idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+```
+
+> 改價時記得三個地方一起改：最上層的 `idle`/`peak`，以及 `models` 裡對應模型的那一份。
+
 ### 時段規則（宿主）
 
 預設值在 [host.js](host.js) 的 `DEFAULT_RULES`：
@@ -157,12 +212,15 @@ const DEFAULT_PRICING = {
 {
   utcOffsetMinutes: 480,
   peakWindows: ['09:00-12:00', '14:00-18:00'],
-  holidays: [],   // 'YYYY-MM-DD'
-  workdays: []    // 'YYYY-MM-DD'，補班日
+  holidays: [],    // 'YYYY-MM-DD'
+  workdays: [],    // 'YYYY-MM-DD'，補班日
+  weekends: 'idle' // 'idle'：週末整天離峰（DeepSeek）；'clock'：只看 peakWindows
 }
 ```
 
 同樣的欄位也可以寫在 bundle 列的 `config` 上（見 [cordis.patch.yml](cordis.patch.yml) 的註解）。**國定假日表預設是空的**：不填時，假日會被當成一般工作日、只在 `peakWindows` 內按尖峰計；要精確請依當年官方行事曆補上 `holidays` / `workdays`。
+
+`weekends` 決定**沒有列在 `workdays`** 的週六日怎麼算：`'idle'`（預設，DeepSeek 口徑：整天離峰）或 `'clock'`（不看星期幾，只看 `peakWindows`，百煉等按量計費的 provider 用這個）。`holidays` 裡的日期在任一口徑下都按離峰計。
 
 ## 已驗證
 
@@ -172,7 +230,7 @@ const DEFAULT_PRICING = {
   node test/fold.test.mjs
   ```
 
-  涵蓋：`09:00` / `12:00` / `14:00` / `18:00` 邊界、週末、國定假日、補班日、`assistant/attempt` 被 `message` 覆蓋、重試雙計、無關事件保持狀態參照、檢查點狀態還原、wire 視圖形狀。
+  涵蓋：`09:00` / `12:00` / `14:00` / `18:00` 邊界、週末、國定假日、補班日、`assistant/attempt` 被 `message` 覆蓋、重試雙計、無關事件保持狀態參照、檢查點狀態還原、wire 視圖形狀，以及 `weekends: 'clock'` 口徑與依模型歸集（同一模型的一次 `attempt` + `message` 只記一次請求，兩個模型各自成列、各段合計回到總量）。
 
 - 執行時對帳：某個 `deepseek-flash` 工作階段（144 次請求）的 `sessionCost` 兩段合計與同工作階段的 `tokenUsage` 合計**逐項相等**——快取讀取 17,137,024 / 未快取輸入 131,962 / 輸出 87,763——代表既沒有重複計費也沒有漏計。
 
@@ -184,8 +242,10 @@ const DEFAULT_PRICING = {
 
 ## 已知限制
 
-- 費率是 `deepseek-flash` 的單一靜態級距：`deepseek-v4-pro` 需自行覆蓋 `config.pricing`（見「單價」）
-- 國定假日 / 補班表需要自己維護，預設空表；週末本身已按離峰處理
+- 費率是靜態值：預設為 `deepseek-flash` 一檔；其他模型（含 `deepseek-v4-pro`）請用 `config.pricing.models` 覆寫（見「依模型定價」），未列出的模型回落到最上層費率
+- 模型歸屬取自 `message.source.model`；取不到時（舊日誌，或宿主尚未發布分模型列）整段算在 `defaultModel` 那一列
+- `peakWindows` 無法表達跨午夜的區間（如 `22:00-24:00`）；百煉這類「夜間離峰」需反向填白天的尖峰窗，見「範例：阿里雲百煉」
+- 國定假日 / 補班表需要自己維護，預設空表；週末預設按離峰處理（`weekends: 'idle'`）
 - 時段歸屬依請求**發起**時刻；跨越 12:00 或 18:00 的長請求整體計入發起時段的價
 - 只統計 provider 有上報 usage 的請求；被中斷且無 usage 的請求不計
 - 明細列金額四捨五入到 3 位，與時段合計可能差 ±0.001

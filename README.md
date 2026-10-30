@@ -52,12 +52,13 @@ DSH 自带的 `tokenUsage` 投影只给全量聚合桶，**没有时间维度**�
 session/* 事件流
    ├─ step/start            → 记录本次请求的发起时刻
    ├─ assistant/attempt     → 流式上报的 usage（随后会被同一请求的 message 覆盖）
-   ├─ assistant/message     → 该请求的最终 usage，按发起时刻归入 idle / peak
+   ├─ assistant/message     → 该请求的最终 usage，按发起时刻归入 idle / peak，
+   │                          并按 message.source.model 归入该模型的独立账本
    └─ llm/retry-started     → 关闭覆盖槽，重试算作第二次请求
         ↓
-   sessionCost 投影 → { idle: {…}, peak: {…}, peakWindows }
+   sessionCost 投影 → { idle: {…}, peak: {…}, peakWindows, models: [{ model, idle, peak }] }
         ↓
-   胶囊 + 明细对话框
+   胶囊 + 明细对话框（按「模型 × 时段」分行，每行用该模型自己的单价）
 ```
 
 ### 计价口径
@@ -149,6 +150,60 @@ const DEFAULT_PRICING = {
 > - 会话若跑在 `deepseek-v4-pro` 上，把 idle 改成 `0.15 / 4.5 / 13.5`、peak 改成 `0.30 / 9 / 27`，否则会低报约 3–7 倍。
 > - 价目是会变的，它不是从 API 实时取的，改价后自己更新这里或 `config.pricing`。
 
+#### 按模型定价
+
+一份会话里可能跑多个模型（多 provider、切模型、子代理），它们的单价往往不同。在 `pricing.models` 下按 **model id 精确匹配**建表，每一项可各自覆盖 `idle` / `peak`；没列出的模型回落到顶层的 `idle` / `peak`：
+
+```yaml
+- id: session-tariff
+  name: dsh-session-tariff
+  config:
+    pricing:
+      currency: '¥'
+      defaultModel: deepseek-v4.1-flash-1017   # 拿不到 model id 时的显示名
+      idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+      models:
+        deepseek-v4.1-flash-1017:
+          idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+          peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+        qwen3.8-max:
+          idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+          peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+```
+
+模型 id 取自每条 `assistant/message` 的 `message.source.model`，因此和 DSH 发给 provider 的 id 完全一致（含 `ZHIPU/GLM-5.3` 这类带斜杠的名字，YAML 里加引号即可）。明细面板会按「模型 × 时段」分行，每行用该模型自己的费率结算。
+
+#### 示例：阿里云百炼
+
+百炼的口径和 DeepSeek 有两处根本不同（以 `deepseek-v4.1-flash-1017` 为例）：
+
+| | DeepSeek 官方 | 百炼 |
+|---|---|---|
+| 闲时时段 | 无统一「闲时」，只有工作日的高峰窗口 | **东八区 22:00–次日 08:00 为闲时，其余全部忙时** |
+| 周末 | 全天按空闲计 | **无优惠，照常按忙时** |
+| 缓存命中 | 0.02 / 0.04 | **0.1 / 0.2** |
+
+插件默认的 `peakWindows` 无法表达跨零点区间（`22:00-24:00` 这类写法不生效），所以要用「反着填」的方式：把白天写成忙时窗口，并让周末也走钟点判定。
+
+```yaml
+- id: session-tariff
+  name: dsh-session-tariff
+  config:
+    utcOffsetMinutes: 480
+    peakWindows: ['08:00-22:00']   # 百炼：22:00-08:00 之外全是忙时
+    weekends: clock                 # 周末按钟点算，而不是整天 idle
+    holidays: []
+    workdays: []
+    pricing:
+      currency: '¥'
+      defaultModel: deepseek-v4.1-flash-1017
+      idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+```
+
+> 改价时记得三处一起改：顶层 `idle`/`peak`，以及 `models` 里对应模型的那一份。
+
 ### 时段规则（宿主）
 
 默认值在 [host.js](host.js) 的 `DEFAULT_RULES`：
@@ -158,11 +213,14 @@ const DEFAULT_PRICING = {
   utcOffsetMinutes: 480,
   peakWindows: ['09:00-12:00', '14:00-18:00'],
   holidays: [],   // 'YYYY-MM-DD'
-  workdays: []    // 'YYYY-MM-DD'，调休上班日
+  workdays: [],   // 'YYYY-MM-DD'，调休上班日
+  weekends: 'idle' // 'idle'：周末全天按空闲（DeepSeek）；'clock'：周末照钟点算（百炼等）
 }
 ```
 
 同样的字段可以写在 bundle 行的 `config` 上（见 [cordis.patch.yml](cordis.patch.yml) 的注释）。**法定节假日表默认是空的**：不填时，节假日会被当作普通工作日、只在 `peakWindows` 内按高峰计；要精确请按当年国务院公告补 `holidays` / `workdays`。
+
+`weekends` 决定**没有被 `workdays` 列出**的周六周日怎么算：`'idle'`（默认，DeepSeek 口径：周末整天按空闲）或 `'clock'`（不区分周末，只看 `peakWindows`，百炼等按量计费的 provider 用这个）。`holidays` 里的日期无论在哪种口径下都按空闲计。
 
 ## 已验证
 
@@ -172,7 +230,7 @@ const DEFAULT_PRICING = {
   node test/fold.test.mjs
   ```
 
-  覆盖：`09:00` / `12:00` / `14:00` / `18:00` 边界、周末、法定节假日、调休上班日、`assistant/attempt` 被 `message` 覆盖、重试双计、无关事件保持状态引用、检查点状态复原、wire 视图形状。
+  覆盖：`09:00` / `12:00` / `14:00` / `18:00` 边界、周末、法定节假日、调休上班日、`assistant/attempt` 被 `message` 覆盖、重试双计、无关事件保持状态引用、检查点状态复原、wire 视图形状，以及 `weekends: 'clock'` 口径与按模型归集（同一模型的一次 `attempt` + `message` 只记一次请求，两个模型各自成行、各段合计回到总量）。
 
 - 运行时对账：某个 `deepseek-flash` 会话（144 次请求）的 `sessionCost` 两档合计与同会话 `tokenUsage` 合计**逐项相等**——缓存读取 17,137,024 / 未缓存输入 131,962 / 输出 87,763——说明既没有重复计费也没有漏计。
 
@@ -182,8 +240,10 @@ const DEFAULT_PRICING = {
 
 ## 已知限制
 
-- 价目是 `deepseek-flash` 的一档静态值：`deepseek-v4-pro` 需自行覆盖 `config.pricing`（见「单价」）
-- 法定节假日 / 调休表需要自己维护，默认空表；周末本身已按空闲处理
+- 价目是静态值：默认一档 `deepseek-flash`；其他模型（含 `deepseek-v4-pro`）请用 `config.pricing.models` 覆盖（见「按模型定价」），未列出的模型回落到顶层费率
+- 模型归属取自 `message.source.model`；拿不到时（老日志、或宿主尚未发布分模型行）整段算作 `defaultModel` 那一行
+- `peakWindows` 不能表达跨零点的区间（如 `22:00-24:00`）；百炼这类「夜间闲时」需反填白天的忙时窗口，见「示例：阿里云百炼」
+- 法定节假日 / 调休表需要自己维护，默认空表；周末默认按空闲处理（`weekends: 'idle'`）
 - 时段归属按请求**发起**时刻；跨越 12:00 或 18:00 边界的长请求整体计入发起时段的价
 - 只统计 provider 上报了 usage 的请求；被中断且无 usage 的请求不计
 - 明细行金额四舍五入到 3 位，与时段合计可能差 ±0.001

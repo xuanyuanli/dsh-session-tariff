@@ -89,6 +89,8 @@ window.__ModuleLoader__.load({
 			'.scost-periodHead{justify-content:space-between;gap:16px;color:var(--dsw-alias-label-primary);display:flex}',
 			'.scost-periodName{align-items:center;gap:8px;min-width:0;display:inline-flex}',
 			'.scost-periodRequests{color:var(--dsw-alias-label-secondary);font-weight:400}',
+			'.scost-model{color:var(--dsw-alias-label-primary);font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+			'.scost-periodTag{color:var(--dsw-alias-label-secondary);border:1px solid var(--dsw-alias-border-l1);border-radius:4px;padding:0 4px;font-size:10px;line-height:14px}',
 			'.scost-periodValue{font-variant-numeric:tabular-nums;white-space:nowrap}',
 			'.scost-lines{color:var(--dsw-alias-label-secondary);grid-template-columns:auto minmax(0,1fr) auto;gap:2px 12px;margin-top:4px;display:grid;font-variant-numeric:tabular-nums}',
 			'.scost-lineLabel{min-width:0}',
@@ -127,11 +129,41 @@ window.__ModuleLoader__.load({
 			const base = { cacheHit: DEFAULT_PRICING.idle.cacheHit, cacheMiss: DEFAULT_PRICING.idle.cacheMiss, cacheWrite: DEFAULT_PRICING.idle.cacheWrite, output: DEFAULT_PRICING.idle.output }
 			const idle = resolveRates(given.idle === undefined ? flat : given.idle, resolveRates(flat, base))
 			const peak = resolveRates(given.peak === undefined ? flat : given.peak, resolveRates(flat, DEFAULT_PRICING.peak))
+			const models = {}
+			const table = given.models !== null && typeof given.models === 'object' && !Array.isArray(given.models) ? given.models : {}
+			for (const key of Object.keys(table)) {
+				const entry = table[key]
+				if (entry === null || typeof entry !== 'object' || Array.isArray(entry)) continue
+				const rowFlat = {
+					cacheHit: entry.cacheHit,
+					cacheMiss: entry.cacheMiss,
+					cacheWrite: entry.cacheWrite,
+					output: entry.output
+				}
+				models[key] = resolveRates(
+					entry.idle === undefined ? rowFlat : entry.idle,
+					resolveRates(rowFlat, idle)
+				)
+				models[key].peak = entry.peak === undefined
+					? resolveRates(rowFlat, peak)
+					: resolveRates(entry.peak, resolveRates(rowFlat, peak))
+			}
 			return {
 				currency: typeof given.currency === 'string' && given.currency.length > 0 ? given.currency : DEFAULT_PRICING.currency,
 				idle,
-				peak
+				peak,
+				models,
+				// Label for runs whose model is unknown (older logs, or a Host that has
+				// not published per-model rows yet).
+				defaultModel: typeof given.defaultModel === 'string' && given.defaultModel.length > 0 ? given.defaultModel : undefined
 			}
+		}
+
+		/** Rates for one model: its own table entry, else the session-wide period rates. */
+		function ratesFor(model, periodKey) {
+			const entry = pricing.models[model]
+			const rates = entry === undefined ? undefined : entry[periodKey]
+			return rates === undefined ? pricing[periodKey] : rates
 		}
 
 		/** Compact token count: 18.2M, 133.0K, 912. */
@@ -245,21 +277,42 @@ window.__ModuleLoader__.load({
 			const aggregate = useProjection('tokenUsage')
 			const seat = useDialogSeat()
 
-			const periods = []
+			// Groups are (model, period) pairs so each row is priced at the rates of
+			// the model that served it. Models with no per-model table fall back to
+			// the session-wide idle/peak rates.
+			const groups = []
 			let fallbackNote = false
-			if (projected !== undefined && projected !== null) {
-				if (hasTokens(projected.idle)) periods.push({ key: 'idle', row: projected.idle, rates: pricing.idle })
-				if (hasTokens(projected.peak)) periods.push({ key: 'peak', row: projected.peak, rates: pricing.peak })
+			const push = (model, key, row) => {
+				if (!hasTokens(row)) return
+				groups.push({
+					model,
+					key,
+					row,
+					rates: ratesFor(model, key),
+					label: translate('period.' + key)
+				})
+			}
+			const perModel = Array.isArray(projected === undefined || projected === null ? undefined : projected.models)
+				? projected.models
+				: []
+			if (projected !== undefined && projected !== null && perModel.length > 0) {
+				for (const entry of perModel) {
+					push(entry.model, 'idle', entry.idle)
+					push(entry.model, 'peak', entry.peak)
+				}
+			} else if (projected !== undefined && projected !== null) {
+				push(pricing.defaultModel, 'idle', projected.idle)
+				push(pricing.defaultModel, 'peak', projected.peak)
 			} else if (aggregate !== undefined && aggregate !== null && hasTokens(aggregate)) {
-				periods.push({ key: 'unknown', row: aggregate, rates: pricing.peak })
+				push(pricing.defaultModel, 'peak', aggregate)
 				fallbackNote = true
 			}
-			if (periods.length === 0) return null
+			if (groups.length === 0) return null
 
 			let total = 0
-			for (const period of periods) {
-				period.amount = amountOf(period.row, period.rates)
-				total += period.amount
+			for (const group of groups) {
+				group.amount = amountOf(group.row, group.rates)
+				total += group.amount
 			}
 			if (!(total > 0)) return null
 
@@ -291,16 +344,17 @@ window.__ModuleLoader__.load({
 					h('span', { className: PREFIX + '-titleLabel' }, h(CostIcon), translate('dialog.title')),
 					h('span', { className: PREFIX + '-titleValue' }, totalText)),
 				h('div', { className: PREFIX + '-rule', 'aria-hidden': true }),
-				periods.map((period) => h('div', { key: period.key, className: PREFIX + '-period' },
+				groups.map((group) => h('div', { key: group.model + '|' + group.key, className: PREFIX + '-period' },
 					h('div', { className: PREFIX + '-periodHead' },
 						h('span', { className: PREFIX + '-periodName' },
-							translate('period.' + period.key),
-							period.row.requests > 0
-								? h('span', { className: PREFIX + '-periodRequests' }, translate('period.requests', { count: period.row.requests }))
+							group.model === undefined ? group.label : h('span', { className: PREFIX + '-model', title: group.model }, group.model),
+							group.model === undefined ? null : h('span', { className: PREFIX + '-periodTag' }, group.label),
+							group.row.requests > 0
+								? h('span', { className: PREFIX + '-periodRequests' }, translate('period.requests', { count: group.row.requests }))
 								: null),
-						h('span', { className: PREFIX + '-periodValue' }, money(period.amount, pricing.currency))),
+						h('span', { className: PREFIX + '-periodValue' }, money(group.amount, pricing.currency))),
 					h('div', { className: PREFIX + '-lines' }, ROW_SPECS.flatMap((spec) => {
-						const tokens = period.row[spec.field]
+						const tokens = group.row[spec.field]
 						if (!(tokens > 0)) return []
 						return [
 							h('div', { key: spec.key + '-label', className: PREFIX + '-lineLabel' }, translate('row.' + spec.key)),
@@ -312,7 +366,7 @@ window.__ModuleLoader__.load({
 							h('div', {
 								key: spec.key + '-value',
 								className: PREFIX + '-lineValue'
-							}, money(tokens * period.rates[spec.rate] / MILLION, pricing.currency))
+							}, money(tokens * group.rates[spec.rate] / MILLION, pricing.currency))
 						]
 					})))),
 				h('div', { className: PREFIX + '-note' }, notes.map((line, index) => h('div', {

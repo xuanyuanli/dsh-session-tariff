@@ -52,12 +52,13 @@ DSH 標準の `tokenUsage` プロジェクションは全量の集計バケッ�
 session/* イベントストリーム
    ├─ step/start            → このリクエストの開始時刻を記録
    ├─ assistant/attempt     → ストリーミング中の usage（同じリクエストの message で上書きされる）
-   ├─ assistant/message     → 確定した usage。開始時刻に応じて idle / peak に計上
+   ├─ assistant/message     → 確定した usage。開始時刻に応じて idle / peak に計上し、
+   │                          そのうえで message.source.model ごとの台帳にも計上
    └─ llm/retry-started     → 上書きスロットを閉じ、リトライは 2 回目のリクエストとして加算
         ↓
-   sessionCost プロジェクション → { idle: {…}, peak: {…}, peakWindows }
+   sessionCost プロジェクション → { idle: {…}, peak: {…}, peakWindows, models: [{ model, idle, peak }] }
         ↓
-   ピル + 内訳ダイアログ
+   ピル + 内訳ダイアログ（「モデル × 時間帯」ごとに 1 行、それぞれ自モデルの単価で計算）
 ```
 
 ### 課金の考え方
@@ -149,6 +150,60 @@ const DEFAULT_PRICING = {
 > - `deepseek-v4-pro` のセッションでは、idle を `0.15 / 4.5 / 13.5`、peak を `0.30 / 9 / 27` に変えてください。そのままだと 3〜7 倍ほど低く見積もります。
 > - 価格は変わります。API からリアルタイムに取っているわけではないので、改定されたらこの定数か `config.pricing` を更新してください。
 
+#### モデルごとの単価
+
+1 つのセッションで複数のモデルを走らせることがあり（複数 provider、モデル切り替え、サブエージェント）、単価はそれぞれ違うのが普通です。`pricing.models` の下に **モデル id 完全一致**の表を作り、各項目で `idle` / `peak` を個別に上書きできます。表にないモデルは最上位の `idle` / `peak` にフォールバックします。
+
+```yaml
+- id: session-tariff
+  name: dsh-session-tariff
+  config:
+    pricing:
+      currency: '¥'
+      defaultModel: deepseek-v4.1-flash-1017   # モデル id が取れないときの表示名
+      idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+      models:
+        deepseek-v4.1-flash-1017:
+          idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+          peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+        qwen3.8-max:
+          idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+          peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+```
+
+モデル id は各 `assistant/message` の `message.source.model` から取るので、DSH が provider に送っている id と完全に一致します（`ZHIPU/GLM-5.3` のようにスラッシュを含む名前は YAML で引用符で囲んでください）。内訳ダイアログは「モデル × 時間帯」ごとに 1 行になり、それぞれ自モデルの単価で計算されます。
+
+#### 例：Alibaba Cloud Bailian（百炼）
+
+Bailian は DeepSeek と根本的に 2 点違います（以下は `deepseek-v4.1-flash-1017` の例）。
+
+| | DeepSeek 公式 | Bailian |
+|---|---|---|
+| アイドル時間帯 | 全体のアイドル帯はなく、平日のピーク窓のみ | **UTC+8 の 22:00〜翌 08:00 がアイドル、それ以外はすべてピーク** |
+| 週末 | 終日アイドル | **割引なし、通常どおりピーク** |
+| キャッシュヒット | 0.02 / 0.04 | **0.1 / 0.2** |
+
+プラグインの `peakWindows` は日付をまたぐ区間を表現できない（`22:00-24:00` のような書き方は効きません）ため、**逆に埋めます**。昼間をピーク窓として書き、週末も時計どおりに判定させます。
+
+```yaml
+- id: session-tariff
+  name: dsh-session-tariff
+  config:
+    utcOffsetMinutes: 480
+    peakWindows: ['08:00-22:00']   # Bailian：22:00〜08:00 の外はすべてピーク
+    weekends: clock                 # 週末は終日アイドルではなく時計どおり
+    holidays: []
+    workdays: []
+    pricing:
+      currency: '¥'
+      defaultModel: deepseek-v4.1-flash-1017
+      idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+```
+
+> 価格を変えるときは 3 か所を一緒に直します：最上位の `idle` / `peak` と、`models` 内の該当モデルの項目です。
+
 ### 時間帯ルール（ホスト）
 
 既定値は [host.js](host.js) の `DEFAULT_RULES` にあります。
@@ -157,12 +212,15 @@ const DEFAULT_PRICING = {
 {
   utcOffsetMinutes: 480,
   peakWindows: ['09:00-12:00', '14:00-18:00'],
-  holidays: [],   // 'YYYY-MM-DD'
-  workdays: []    // 'YYYY-MM-DD'、振替出勤日
+  holidays: [],    // 'YYYY-MM-DD'
+  workdays: [],    // 'YYYY-MM-DD'、振替出勤日
+  weekends: 'idle' // 'idle'：週末は終日アイドル（DeepSeek）、'clock'：peakWindows だけを見る
 }
 ```
 
 同じフィールドはバンドル行の `config` にも書けます（[cordis.patch.yml](cordis.patch.yml) のコメント参照）。**法定休日の表は既定で空**です。空のままだと休日は通常の平日として扱われ、`peakWindows` の中ではピークとして計算されます。正確にしたい場合は、その年の公式カレンダーに合わせて `holidays` / `workdays` を埋めてください。
+
+`weekends` は、`workdays` に**載っていない**土日の扱いを決めます。`'idle'`（既定、DeepSeek の口径：終日アイドル）か `'clock'`（曜日を無視して `peakWindows` だけを見る。Bailian など従量課金の provider はこちら）。`holidays` に入れた日付はどちらの口径でもアイドルになります。
 
 ## 検証済み
 
@@ -172,7 +230,7 @@ const DEFAULT_PRICING = {
   node test/fold.test.mjs
   ```
 
-  対象：`09:00` / `12:00` / `14:00` / `18:00` の境界、週末、法定休日、振替出勤日、`assistant/attempt` が `message` で上書きされること、リトライの二重計上、無関係なイベントで状態の参照が保たれること、チェックポイントからの復元、wire ビューの形。
+  対象：`09:00` / `12:00` / `14:00` / `18:00` の境界、週末、法定休日、振替出勤日、`assistant/attempt` が `message` で上書きされること、リトライの二重計上、無関係なイベントで状態の参照が保たれること、チェックポイントからの復元、wire ビューの形、加えて `weekends: 'clock'` の口径とモデル別の計上（同じモデルの `attempt` + `message` が 1 リクエストとして数えられ、2 つのモデルが別々の行になり、行の合計が総量に戻ること）。
 
 - 実行時の突き合わせ：ある `deepseek-flash` セッション（144 リクエスト）で、`sessionCost` の 2 つの時間帯の合計が同じセッションの `tokenUsage` 合計と**バケット単位で一致**しました — キャッシュ読み取り 17,137,024 / 未キャッシュ入力 131,962 / 出力 87,763。二重計上も取りこぼしもありません。
 
@@ -182,8 +240,10 @@ const DEFAULT_PRICING = {
 
 ## 既知の制限
 
-- 単価は `deepseek-flash` の 1 段階分の固定値です。`deepseek-v4-pro` では `config.pricing` の上書きが必要です（「単価」参照）
-- 法定休日 / 振替出勤日の表は自分で保守する必要があり、既定は空です（週末自体はアイドルとして扱われます）
+- 単価は静的な値です。既定は `deepseek-flash` の 1 段階分で、他のモデル（`deepseek-v4-pro` を含む）は `config.pricing.models` で上書きしてください（「モデルごとの単価」参照）。表にないモデルは最上位の単価にフォールバックします
+- モデルの帰属は `message.source.model` から取ります。取れない場合（古いログ、またはホストがモデル別の行をまだ公開していない場合）は全体が `defaultModel` の行になります
+- `peakWindows` は日付をまたぐ区間（`22:00-24:00` など）を表現できません。Bailian のような「夜間アイドル」は昼間をピーク窓として逆に埋めてください（「例：Alibaba Cloud Bailian」参照）
+- 法定休日 / 振替出勤日の表は自分で保守する必要があり、既定は空です（週末は既定でアイドル扱い、`weekends: 'idle'`）
 - 時間帯はリクエストの**開始**時刻で決まります。12:00 や 18:00 をまたぐ長いリクエストは、開始時の区分で全体が計算されます
 - provider が usage を報告したリクエストだけを数えます。中断されて usage がないリクエストは対象外です
 - 内訳の金額は小数 3 桁で丸めるため、時間帯の合計と ±0.001 ずれることがあります

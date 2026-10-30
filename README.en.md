@@ -52,12 +52,13 @@ The built-in `tokenUsage` projection only exposes aggregate buckets — **it has
 session/* event stream
    ├─ step/start            → remember when this request started
    ├─ assistant/attempt     → streamed usage (later overwritten by the message of the same request)
-   ├─ assistant/message     → final usage for the request, filed under idle / peak by start time
+   ├─ assistant/message     → final usage for the request, filed under idle / peak by start time,
+   │                          and into that model's own ledger via message.source.model
    └─ llm/retry-started     → closes the overwrite slot; the retry counts as a second request
         ↓
-   sessionCost projection → { idle: {…}, peak: {…}, peakWindows }
+   sessionCost projection → { idle: {…}, peak: {…}, peakWindows, models: [{ model, idle, peak }] }
         ↓
-   pill + breakdown dialog
+   pill + breakdown dialog (one row per model × period, priced at that model's own rates)
 ```
 
 ### Billing rules
@@ -149,6 +150,60 @@ The unit is **currency units per one million tokens**. Override any subset on th
 > - On a `deepseek-v4-pro` session, set idle to `0.15 / 4.5 / 13.5` and peak to `0.30 / 9 / 27`; otherwise the estimate under-reports by roughly 3–7×.
 > - Prices change. They are not fetched live, so update this constant or `config.pricing` when the list moves.
 
+#### Per-model pricing
+
+One session may run several models (multiple providers, model switching, subagents), and their unit prices usually differ. Build a table under `pricing.models` keyed by **exact model id**; each entry may override `idle` / `peak` independently. Models not listed fall back to the top-level `idle` / `peak`:
+
+```yaml
+- id: session-tariff
+  name: dsh-session-tariff
+  config:
+    pricing:
+      currency: '¥'
+      defaultModel: deepseek-v4.1-flash-1017   # label used when the model id is unknown
+      idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+      models:
+        deepseek-v4.1-flash-1017:
+          idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+          peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+        qwen3.8-max:
+          idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+          peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+```
+
+The model id comes from `message.source.model` on each `assistant/message`, so it is exactly what DSH sends to the provider (quote names containing slashes such as `ZHIPU/GLM-5.3` in YAML). The breakdown dialog splits into one row per model × period, each settled at that model's own rates.
+
+#### Example: Alibaba Cloud Bailian
+
+Bailian differs from DeepSeek in two fundamental ways (shown here for `deepseek-v4.1-flash-1017`):
+
+| | DeepSeek official | Bailian |
+|---|---|---|
+| Idle window | No global idle band, only weekday peak windows | **Idle 22:00–08:00 UTC+8, busy the rest of the day** |
+| Weekends | Idle all day | **No discount, billed as busy** |
+| Cache hit | 0.02 / 0.04 | **0.1 / 0.2** |
+
+The plugin's `peakWindows` cannot express a range that crosses midnight (a `22:00-24:00` entry does not work), so **fill it inverted**: write the daytime as the peak window and let weekends follow the wall clock.
+
+```yaml
+- id: session-tariff
+  name: dsh-session-tariff
+  config:
+    utcOffsetMinutes: 480
+    peakWindows: ['08:00-22:00']   # Bailian: everything outside 22:00-08:00 is busy
+    weekends: clock                 # weekends follow the clock instead of billing idle all day
+    holidays: []
+    workdays: []
+    pricing:
+      currency: '¥'
+      defaultModel: deepseek-v4.1-flash-1017
+      idle: { cacheHit: 0.1, cacheMiss: 1, cacheWrite: 1, output: 4 }
+      peak: { cacheHit: 0.2, cacheMiss: 2, cacheWrite: 2, output: 8 }
+```
+
+> When prices change, update all three places: the top-level `idle`/`peak` and the matching model entry under `models`.
+
 ### Period rules (host)
 
 Defaults live in `DEFAULT_RULES` in [host.js](host.js):
@@ -157,12 +212,15 @@ Defaults live in `DEFAULT_RULES` in [host.js](host.js):
 {
   utcOffsetMinutes: 480,
   peakWindows: ['09:00-12:00', '14:00-18:00'],
-  holidays: [],   // 'YYYY-MM-DD'
-  workdays: []    // 'YYYY-MM-DD', make-up workdays
+  holidays: [],    // 'YYYY-MM-DD'
+  workdays: [],    // 'YYYY-MM-DD', make-up workdays
+  weekends: 'idle' // 'idle': weekends bill idle all day (DeepSeek); 'clock': follow peakWindows
 }
 ```
 
 The same fields can be set on the bundle row's `config` (see the comments in [cordis.patch.yml](cordis.patch.yml)). **The holiday table is empty by default**: without it, a public holiday is treated as an ordinary workday and bills as peak inside `peakWindows`. Fill `holidays` / `workdays` from the official calendar for exactness.
+
+`weekends` decides how a Saturday/Sunday that is **not** listed in `workdays` is classified: `'idle'` (the default, DeepSeek's rule: idle all day) or `'clock'` (ignore the weekday and only look at `peakWindows`, which is what Bailian and other pay-as-you-go providers do). Any date in `holidays` bills as idle under either policy.
 
 ## Verified
 
@@ -172,7 +230,7 @@ The same fields can be set on the bundle row's `config` (see the comments in [co
   node test/fold.test.mjs
   ```
 
-  Covers the `09:00` / `12:00` / `14:00` / `18:00` boundaries, weekends, public holidays, make-up workdays, `assistant/attempt` being overwritten by `message`, retries counting twice, unrelated events preserving state identity, checkpoint restore, and the wire view shape.
+  Covers the `09:00` / `12:00` / `14:00` / `18:00` boundaries, weekends, public holidays, make-up workdays, `assistant/attempt` being overwritten by `message`, retries counting twice, unrelated events preserving state identity, checkpoint restore, the wire view shape, plus the `weekends: 'clock'` policy and per-model attribution (one `attempt` + `message` on the same model counts as a single request, two models produce two rows, and the rows sum back to the totals).
 
 - Runtime reconciliation: on one `deepseek-flash` session (144 requests) the two `sessionCost` periods summed to exactly the same `tokenUsage` totals — cached read 17,137,024 / uncached input 131,962 / output 87,763 — so nothing is billed twice and nothing is dropped.
 
@@ -182,8 +240,10 @@ The same fields can be set on the bundle row's `config` (see the comments in [co
 
 ## Known limitations
 
-- The prices are one static `deepseek-flash` tier: `deepseek-v4-pro` needs a `config.pricing` override (see "Unit prices")
-- The holiday / make-up-workday table is yours to maintain and empty by default; weekends are already idle
+- The prices are static: one `deepseek-flash` tier by default; override other models (including `deepseek-v4-pro`) via `config.pricing.models` (see "Per-model pricing"), and unlisted models fall back to the top-level rates
+- Model attribution comes from `message.source.model`; when it is missing (older logs, or a Host that has not published per-model rows) the whole session lands on the `defaultModel` row
+- `peakWindows` cannot express a range crossing midnight (such as `22:00-24:00`); Bailian-style "idle at night" needs the daytime filled in as the peak window (see "Example: Alibaba Cloud Bailian")
+- The holiday / make-up-workday table is yours to maintain and empty by default; weekends bill as idle by default (`weekends: 'idle'`)
 - A request is filed by its **start** time; a long request that crosses 12:00 or 18:00 bills entirely at the starting tier
 - Only requests with provider-reported usage are counted; a cancelled request without usage is not
 - Detail rows round to 3 decimals, so they can differ from the period total by ±0.001
