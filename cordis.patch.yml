@@ -1,6 +1,13 @@
 - insert:
     - id: session-tariff
       name: dsh-session-tariff
+      # You normally do not edit this row by hand: the plugin ships a price-book
+      # editor at Settings → Plugins → Session cost, whose rows follow the
+      # providers/models DSH has registered. Saving there writes the edited
+      # `config` into this row (via the Host's configEditor) and the new prices
+      # apply without a restart. Use the YAML below only to pin prices in the
+      # repo or to install from a script.
+      #
       # Optional overrides. Prices and tariff rules ship as built-in books keyed by
       # the provider id DSH reports on the wire (message.source.provider /
       # request/context.provider), so a session bills correctly on whichever

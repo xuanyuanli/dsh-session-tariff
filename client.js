@@ -66,7 +66,55 @@ window.__ModuleLoader__.load({
 			'note.dayRule.idle': '周末与法定节假日全天按空闲计',
 			'note.dayRule.clock': '周末照常按时段计，周末无优惠',
 			'note.fallback': '尚未取得分时段用量，暂按高峰价估算',
-			'note.provider': '{provider}：'
+			'note.provider': '{provider}：',
+			'settings.tab': '会话花费',
+			'settings.title': '会话花费价目',
+			'settings.desc': '按 DSH 当前注册的模型与供应商配置单价（¥ / 百万 tokens）。保存后立即生效，无需重启。未单独配置的模型沿用所在供应商的默认档。',
+			'settings.loading': '正在读取价目…',
+			'settings.hostMissing': '读不到价目接口：宿主半尚未加载。升级或修改过宿主代码后，重启 DSH 再打开本页。',
+			'settings.empty': '还没有注册任何模型供应商，先在「设置 → 模型」里加一个。',
+			'settings.period.idle': '空闲',
+			'settings.period.peak': '高峰',
+			'settings.field.cacheHit': '命中',
+			'settings.field.cacheMiss': '未命中',
+			'settings.field.cacheWrite': '写入',
+			'settings.field.output': '输出',
+			'settings.model': '模型',
+			'settings.rules': '时段规则',
+			'settings.peakWindows': '高峰时段',
+			'settings.peakWindowsHint': 'HH:MM-HH:MM，逗号分隔',
+			'settings.weekends': '周末',
+			'settings.weekends.idle': '全天空闲',
+			'settings.weekends.clock': '照常计时',
+			'settings.utcOffset': '时区（分钟）',
+			'settings.holidays': '节假日',
+			'settings.workdays': '调休工作日',
+			'settings.datesHint': 'YYYY-MM-DD，逗号分隔',
+			'settings.defaultRow': '供应商默认档',
+			'settings.defaultRowHint': '模型自身没有配置时按这档计',
+			'settings.resetModel': '恢复默认',
+			'settings.resetProvider': '清除本供应商全部覆盖',
+			'settings.source.preset': '内置预设',
+			'settings.source.config': '已自定义',
+			'settings.source.book': '兜底档',
+			'settings.fallback': '兜底价目（无预设的供应商）',
+			'settings.stale': '已失效的配置',
+			'settings.staleHint': 'DSH 已不再注册这些供应商或模型，保存前可一键清掉。',
+			'settings.staleProvider': '供应商 {name}',
+			'settings.staleModel': '{provider} / {model}',
+			'settings.clean': '清理',
+			'settings.save': '保存',
+			'settings.saving': '保存中…',
+			'settings.reload': '重新读取',
+			'settings.refresh': '刷新模型列表',
+			'settings.dirty': '有未保存的修改',
+			'settings.clean2': '已保存，胶囊已按新价重算',
+			'settings.failed': '保存失败：{error}',
+			'settings.readFailed': '读取失败：{error}',
+			'settings.readonly': '当前部署没有可写的 profile 行，只能查看。',
+			'settings.currency': '币种',
+			'settings.warnings': '提示：',
+			'settings.inherited': '留空表示沿用上层默认'
 		}
 
 		const EN = {
@@ -86,7 +134,55 @@ window.__ModuleLoader__.load({
 			'note.dayRule.idle': 'weekends and public holidays bill idle all day',
 			'note.dayRule.clock': 'weekends follow the same clock with no discount',
 			'note.fallback': 'Per-period usage is not available yet; estimated at peak rates',
-			'note.provider': '{provider}: '
+			'note.provider': '{provider}: ',
+			'settings.tab': 'Session cost',
+			'settings.title': 'Session cost price book',
+			'settings.desc': 'Prices per 1M tokens (¥), one row per model DSH currently registers. Saving applies immediately — no restart. A model without its own row bills at its provider default.',
+			'settings.loading': 'Reading the price book…',
+			'settings.hostMissing': 'The price API is unavailable: the Host half is not loaded yet. After changing Host code, restart DSH and reopen this page.',
+			'settings.empty': 'No model provider is registered yet. Add one in Settings → Models first.',
+			'settings.period.idle': 'Idle',
+			'settings.period.peak': 'Peak',
+			'settings.field.cacheHit': 'Hit',
+			'settings.field.cacheMiss': 'Miss',
+			'settings.field.cacheWrite': 'Write',
+			'settings.field.output': 'Output',
+			'settings.model': 'Model',
+			'settings.rules': 'Tariff rules',
+			'settings.peakWindows': 'Peak windows',
+			'settings.peakWindowsHint': 'HH:MM-HH:MM, comma separated',
+			'settings.weekends': 'Weekends',
+			'settings.weekends.idle': 'Idle all day',
+			'settings.weekends.clock': 'Follow the clock',
+			'settings.utcOffset': 'UTC offset (minutes)',
+			'settings.holidays': 'Holidays',
+			'settings.workdays': 'Make-up workdays',
+			'settings.datesHint': 'YYYY-MM-DD, comma separated',
+			'settings.defaultRow': 'Provider default row',
+			'settings.defaultRowHint': 'Used by models without their own row',
+			'settings.resetModel': 'Reset',
+			'settings.resetProvider': 'Clear every override for this provider',
+			'settings.source.preset': 'built-in preset',
+			'settings.source.config': 'customized',
+			'settings.source.book': 'fallback book',
+			'settings.fallback': 'Fallback book (providers without a preset)',
+			'settings.stale': 'Stale configuration',
+			'settings.staleHint': 'DSH no longer registers these providers or models; remove them before saving.',
+			'settings.staleProvider': 'provider {name}',
+			'settings.staleModel': '{provider} / {model}',
+			'settings.clean': 'Remove',
+			'settings.save': 'Save',
+			'settings.saving': 'Saving…',
+			'settings.reload': 'Reload',
+			'settings.refresh': 'Refresh models',
+			'settings.dirty': 'Unsaved changes',
+			'settings.clean2': 'Saved — the pill is already repriced',
+			'settings.failed': 'Save failed: {error}',
+			'settings.readFailed': 'Read failed: {error}',
+			'settings.readonly': 'This deployment exposes no writable profile row; the page is read-only.',
+			'settings.currency': 'Currency',
+			'settings.warnings': 'Notes: ',
+			'settings.inherited': 'Leave empty to inherit'
 		}
 
 		const MEASURE_STYLE = { left: 0, top: 0, visibility: 'hidden' }
@@ -118,7 +214,38 @@ window.__ModuleLoader__.load({
 			'.scost-lineTokens{text-align:right;white-space:nowrap}',
 			'.scost-lineValue{color:var(--dsw-alias-label-primary);text-align:right;white-space:nowrap;min-width:56px}',
 			'.scost-note{color:var(--dsw-alias-label-secondary);opacity:.75;margin-top:10px;font-size:11px;line-height:16px}',
-			'.scost-noteLine+.scost-noteLine{margin-top:2px}'
+			'.scost-noteLine+.scost-noteLine{margin-top:2px}',
+			// --- Settings → Plugins page ---------------------------------------
+			'.scost-settings{display:flex;flex-direction:column;gap:16px;color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
+			'.scost-settingsHead{display:flex;flex-direction:column;gap:4px}',
+			'.scost-settingsTitle{color:var(--dsw-alias-label-primary);font-size:14px;font-weight:600}',
+			'.scost-settingsDesc{max-width:760px}',
+			'.scost-card{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}',
+			'.scost-cardHead{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}',
+			'.scost-cardName{color:var(--dsw-alias-label-primary);font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden;text-overflow:ellipsis}',
+			'.scost-badge{border:1px solid var(--dsw-alias-border-l1);border-radius:4px;padding:0 5px;font-size:10px;line-height:16px;white-space:nowrap}',
+			'.scost-badge[data-source=config]{border-color:var(--dsw-alias-brand-primary);color:var(--dsw-alias-brand-primary)}',
+			'.scost-rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:8px 12px}',
+			'.scost-field{display:flex;flex-direction:column;gap:2px;min-width:0}',
+			'.scost-fieldLabel{font-size:11px;line-height:14px;opacity:.8}',
+			'.scost-input,.scost-select{box-sizing:border-box;width:100%;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l1);border-radius:6px;color:var(--dsw-alias-label-primary);font:inherit;font-size:12px;padding:3px 6px;min-width:0}',
+			'.scost-input:focus-visible,.scost-select:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:-1px}',
+			'.scost-input[data-override=true]{background:var(--dsw-alias-bg-overlay);border-color:var(--dsw-alias-brand-primary)}',
+			'.scost-scroll{overflow-x:auto}',
+			'.scost-grid{display:grid;grid-template-columns:minmax(150px,1fr) repeat(8,minmax(58px,84px)) 64px;gap:4px 6px;align-items:center;min-width:700px;font-variant-numeric:tabular-nums}',
+			'.scost-gridHead{font-size:11px;line-height:14px;opacity:.75;padding-bottom:2px}',
+			'.scost-gridName{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--dsw-alias-label-primary)}',
+			'.scost-gridName[data-source=preset]::after,.scost-gridName[data-source=book]::after{content:" · 默认";opacity:.5;font-size:10px}',
+			'.scost-gridSep{grid-column:2 / span 4;border-top:1px solid var(--dsw-alias-border-l1);margin:6px 0 2px}',
+			'.scost-mini{font:inherit;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);background:0 0;border:1px solid transparent;border-radius:4px;padding:1px 4px;cursor:pointer;white-space:nowrap}',
+			'.scost-mini:hover{background:var(--dsw-alias-bg-layer-2);color:var(--dsw-alias-label-primary);border-color:var(--dsw-alias-border-l1)}',
+			'.scost-mini:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:1px}',
+			'.scost-footer{display:flex;align-items:center;gap:8px;flex-wrap:wrap;position:sticky;bottom:0;background:var(--dsw-alias-bg-layer-1);padding:10px 0}',
+			'.scost-primary{font:inherit;font-size:12px;line-height:18px;border-radius:6px;padding:3px 12px;cursor:pointer;background:var(--dsw-alias-brand-primary);border:1px solid var(--dsw-alias-brand-primary);color:var(--dsw-alias-bg-layer-1)}',
+			'.scost-primary:disabled{opacity:.4;cursor:default}',
+			'.scost-status{font-size:11px;line-height:16px;opacity:.8}',
+			'.scost-status[data-kind=error]{color:var(--dsw-alias-state-error-primary);opacity:1}',
+			'.scost-hint{font-size:11px;line-height:15px;opacity:.65}'
 		].join('\n')
 
 		/**
@@ -567,6 +694,496 @@ window.__ModuleLoader__.load({
 			}
 		}
 
+		// ------------------------------------------------------------------
+		// Settings → Plugins: the price-book editor
+		//
+		// The row's config lives on the Host, so this page is a thin client of the
+		// JSON API in host.js: it never guesses which providers or models exist and
+		// never writes the patch itself. Every model row it renders comes from the
+		// live catalog, so adding or removing a model in DSH changes this page on the
+		// next read, with the defaults already filled in.
+		// ------------------------------------------------------------------
+
+		const API_BASE = '/dsh-session-tariff/api'
+
+		const RATE_FIELDS = [
+			{ key: 'cacheHit', label: 'settings.field.cacheHit' },
+			{ key: 'cacheMiss', label: 'settings.field.cacheMiss' },
+			{ key: 'cacheWrite', label: 'settings.field.cacheWrite' },
+			{ key: 'output', label: 'settings.field.output' }
+		]
+
+		const RATE_PERIODS = [
+			{ key: 'idle', label: 'settings.period.idle' },
+			{ key: 'peak', label: 'settings.period.peak' }
+		]
+
+		const RATE_COLUMNS = RATE_PERIODS.flatMap((period) =>
+			RATE_FIELDS.map((field) => ({
+				key: period.key + '.' + field.key,
+				period: period.key,
+				field: field.key,
+				periodLabel: period.label,
+				fieldLabel: field.label
+			})))
+
+		function isDataObject(value) {
+			return value !== null && typeof value === 'object' && !Array.isArray(value)
+		}
+
+		/** A detached copy: the draft is edited by replacement, never by mutation. */
+		function cloneData(value) {
+			return value === undefined ? undefined : JSON.parse(JSON.stringify(value))
+		}
+
+		/** Own-property read: never walks the prototype chain. */
+		function own(object, key) {
+			return isDataObject(object) && Object.prototype.hasOwnProperty.call(object, key) ? object[key] : undefined
+		}
+
+		function readAt(root, path) {
+			let node = root
+			for (const key of path) {
+				node = own(node, key)
+				if (node === undefined) return undefined
+			}
+			return node
+		}
+
+		function writeAt(root, path, value) {
+			let node = root
+			for (let index = 0; index < path.length - 1; index += 1) {
+				const key = path[index]
+				if (!isDataObject(own(node, key))) node[key] = {}
+				node = node[key]
+			}
+			node[path[path.length - 1]] = value
+		}
+
+		/** Delete a leaf and every object the deletion left empty, bottom-up. */
+		function deleteAt(root, path) {
+			const parents = []
+			let node = root
+			for (let index = 0; index < path.length - 1; index += 1) {
+				const key = path[index]
+				const child = own(node, key)
+				if (!isDataObject(child)) return
+				parents.push([node, key])
+				node = child
+			}
+			delete node[path[path.length - 1]]
+			for (let index = parents.length - 1; index >= 0; index -= 1) {
+				const parent = parents[index][0]
+				const key = parents[index][1]
+				const child = own(parent, key)
+				if (isDataObject(child) && Object.keys(child).length === 0) delete parent[key]
+			}
+		}
+
+		function requestJson(path, init) {
+			return fetch(API_BASE + path, Object.assign({ credentials: 'same-origin', cache: 'no-store' }, init)).then((response) => {
+				if (!response.ok) throw new Error('HTTP ' + response.status)
+				return response.json()
+			})
+		}
+
+		function numberAt(value) {
+			return typeof value === 'number' && Number.isFinite(value) ? String(value) : ''
+		}
+
+		function arraysAt(value) {
+			return Array.isArray(value) ? value.join(', ') : ''
+		}
+
+		/** The price-book editor rendered inside Settings → Plugins. */
+		function TariffSettings() {
+			const [state, setState] = React.useState(null)
+			const [draft, setDraft] = React.useState({})
+			const [version, setVersion] = React.useState(0)
+			const [status, setStatus] = React.useState({ kind: 'loading', text: '' })
+			const [dirty, setDirty] = React.useState(false)
+			const [busy, setBusy] = React.useState(false)
+
+			const t = fallbackT
+
+			const adopt = React.useCallback((next) => {
+				setState(next)
+				setDraft(isDataObject(next.config) ? cloneData(next.config) : {})
+				setVersion((value) => value + 1)
+				setDirty(false)
+			}, [])
+
+			const load = React.useCallback(() => {
+				setStatus({ kind: 'loading', text: fallbackT('settings.loading') })
+				setBusy(true)
+				requestJson('/state', { headers: { accept: 'application/json' } })
+					.then((payload) => {
+						if (payload === null || typeof payload !== 'object' || payload.ok !== true) {
+							setStatus({ kind: 'error', text: fallbackT('settings.readFailed', { error: (payload && payload.error) || 'unknown' }) })
+							return
+						}
+						adopt(payload)
+						setStatus({ kind: 'idle', text: '' })
+					})
+					.catch((error) => {
+						setStatus({ kind: 'error', text: fallbackT('settings.hostMissing') + ' — ' + String(error && error.message ? error.message : error) })
+					})
+					.then(() => setBusy(false))
+			}, [adopt])
+
+			React.useEffect(() => {
+				load()
+			}, [load])
+
+			const commit = (next) => {
+				setDraft(next)
+				setDirty(true)
+				setStatus({ kind: 'dirty', text: t('settings.dirty') })
+			}
+
+			const editRate = (path, field, raw) => {
+				const text = String(raw).trim()
+				const next = isDataObject(draft) ? cloneData(draft) : {}
+				if (text === '') {
+					deleteAt(next, path.concat(field))
+				} else {
+					const number = Number(text)
+					if (!Number.isFinite(number) || number < 0) return
+					writeAt(next, path.concat(field), number)
+				}
+				commit(next)
+			}
+
+			const editRuleText = (path, key, raw) => {
+				const next = isDataObject(draft) ? cloneData(draft) : {}
+				const list = String(raw)
+					.split(',')
+					.map((item) => item.trim())
+					.filter((item) => item !== '')
+				if (list.length === 0) deleteAt(next, path.concat(key))
+				else writeAt(next, path.concat(key), list)
+				commit(next)
+			}
+
+			const editRuleNumber = (path, key, raw) => {
+				const text = String(raw).trim()
+				const next = isDataObject(draft) ? cloneData(draft) : {}
+				if (text === '') {
+					deleteAt(next, path.concat(key))
+				} else {
+					const number = Number(text)
+					if (!Number.isFinite(number)) return
+					writeAt(next, path.concat(key), number)
+				}
+				commit(next)
+			}
+
+			const editRuleChoice = (path, key, raw) => {
+				const next = isDataObject(draft) ? cloneData(draft) : {}
+				if (raw === 'idle' || raw === 'clock') writeAt(next, path.concat(key), raw)
+				else deleteAt(next, path.concat(key))
+				commit(next)
+			}
+
+			const dropPath = (path) => {
+				const next = isDataObject(draft) ? cloneData(draft) : {}
+				deleteAt(next, path)
+				commit(next)
+			}
+
+			const dropPaths = (paths) => {
+				const next = isDataObject(draft) ? cloneData(draft) : {}
+				for (const path of paths) deleteAt(next, path)
+				commit(next)
+			}
+
+			const save = () => {
+				if (busy || !dirty) return
+				setBusy(true)
+				setStatus({ kind: 'saving', text: t('settings.saving') })
+				requestJson('/save', {
+					method: 'POST',
+					headers: { accept: 'application/json', 'content-type': 'application/json' },
+					body: JSON.stringify({ config: draft })
+				})
+					.then((payload) => {
+						if (payload === null || typeof payload !== 'object' || payload.ok === false) {
+							setStatus({ kind: 'error', text: t('settings.failed', { error: (payload && payload.error) || 'unknown' }) })
+							return
+						}
+						if (payload.state !== undefined) adopt(payload.state)
+						setDirty(false)
+						setStatus({ kind: 'saved', text: t('settings.clean2') })
+					})
+					.catch((error) => {
+						setStatus({ kind: 'error', text: t('settings.failed', { error: String(error && error.message ? error.message : error) }) })
+					})
+					.then(() => setBusy(false))
+			}
+
+			const rateCell = (path, column, fallbackRate, label) => {
+				const current = readAt(draft, path.concat(column.field))
+				const overridden = typeof current === 'number'
+				return h('input', {
+					key: 'rate:' + label + ':' + column.key,
+					className: PREFIX + '-input',
+					type: 'number',
+					step: '0.001',
+					min: '0',
+					inputMode: 'decimal',
+					'aria-label': label + ' ' + t(column.periodLabel) + ' ' + t(column.fieldLabel),
+					'data-override': overridden ? 'true' : 'false',
+					defaultValue: overridden ? String(current) : '',
+					placeholder: numberAt(fallbackRate),
+					onChange: (event) => editRate(path, column.field, event.target.value)
+				})
+			}
+
+			const rulesFields = (provider, path) => {
+				const rules = isDataObject(provider.rules) ? provider.rules : {}
+				const defaults = isDataObject(provider.defaults) && isDataObject(provider.defaults.rules) ? provider.defaults.rules : {}
+				const currentWindows = readAt(draft, path.concat('peakWindows'))
+				const currentHolidays = readAt(draft, path.concat('holidays'))
+				const currentWorkdays = readAt(draft, path.concat('workdays'))
+				const currentOffset = readAt(draft, path.concat('utcOffsetMinutes'))
+				const currentWeekends = readAt(draft, path.concat('weekends'))
+				return h('div', { className: PREFIX + '-rules' },
+					h('label', { className: PREFIX + '-field' },
+						h('span', { className: PREFIX + '-fieldLabel' }, t('settings.peakWindows')),
+						h('input', {
+							className: PREFIX + '-input',
+							type: 'text',
+							'data-override': Array.isArray(currentWindows) ? 'true' : 'false',
+							defaultValue: Array.isArray(currentWindows) ? currentWindows.join(', ') : '',
+							placeholder: arraysAt(defaults.peakWindows),
+							title: t('settings.peakWindowsHint'),
+							onChange: (event) => editRuleText(path, 'peakWindows', event.target.value)
+						})),
+					h('label', { className: PREFIX + '-field' },
+						h('span', { className: PREFIX + '-fieldLabel' }, t('settings.weekends')),
+						h('select', {
+							className: PREFIX + '-select',
+							defaultValue: typeof currentWeekends === 'string' ? currentWeekends : (rules.weekends === 'clock' ? 'clock' : 'idle'),
+							onChange: (event) => editRuleChoice(path, 'weekends', event.target.value)
+						},
+							h('option', { value: 'idle' }, t('settings.weekends.idle')),
+							h('option', { value: 'clock' }, t('settings.weekends.clock')))),
+					h('label', { className: PREFIX + '-field' },
+						h('span', { className: PREFIX + '-fieldLabel' }, t('settings.utcOffset')),
+						h('input', {
+							className: PREFIX + '-input',
+							type: 'number',
+							step: '30',
+							'data-override': typeof currentOffset === 'number' ? 'true' : 'false',
+							defaultValue: typeof currentOffset === 'number' ? String(currentOffset) : '',
+							placeholder: numberAt(defaults.utcOffsetMinutes),
+							onChange: (event) => editRuleNumber(path, 'utcOffsetMinutes', event.target.value)
+						})),
+					h('label', { className: PREFIX + '-field' },
+						h('span', { className: PREFIX + '-fieldLabel' }, t('settings.holidays')),
+						h('input', {
+							className: PREFIX + '-input',
+							type: 'text',
+							'data-override': Array.isArray(currentHolidays) ? 'true' : 'false',
+							defaultValue: Array.isArray(currentHolidays) ? currentHolidays.join(', ') : '',
+							placeholder: arraysAt(defaults.holidays),
+							title: t('settings.datesHint'),
+							onChange: (event) => editRuleText(path, 'holidays', event.target.value)
+						})),
+					h('label', { className: PREFIX + '-field' },
+						h('span', { className: PREFIX + '-fieldLabel' }, t('settings.workdays')),
+						h('input', {
+							className: PREFIX + '-input',
+							type: 'text',
+							'data-override': Array.isArray(currentWorkdays) ? 'true' : 'false',
+							defaultValue: Array.isArray(currentWorkdays) ? currentWorkdays.join(', ') : '',
+							placeholder: arraysAt(defaults.workdays),
+							title: t('settings.datesHint'),
+							onChange: (event) => editRuleText(path, 'workdays', event.target.value)
+						})))
+			}
+
+			/**
+			 * One price table: a provider-default row plus one row per live model.
+			 * @param keyPrefix - render key namespace (`bailian`, `fallback`).
+			 * @param models - live model rows (empty for the fallback book).
+			 * @param defaults - rates the provider-default row inherits.
+			 * @param bookPath - config path of the price table (`['providers', id, 'pricing']`).
+			 */
+			const priceGrid = (keyPrefix, models, defaults, bookPath) => {
+				const head = [
+					h('div', { key: 'name', className: PREFIX + '-gridHead' }, t('settings.model')),
+					RATE_COLUMNS.map((column) => h('div', {
+						key: column.key,
+						className: PREFIX + '-gridHead'
+					}, t(column.periodLabel) + ' · ' + t(column.fieldLabel))),
+					h('div', { key: 'reset', className: PREFIX + '-gridHead' }, '')
+				]
+				const bookRow = [
+					h('div', { key: 'book', className: PREFIX + '-gridName', title: t('settings.defaultRowHint') }, t('settings.defaultRow')),
+					RATE_COLUMNS.map((column) => rateCell(bookPath.concat(column.period), column, own(own(defaults, column.period), column.field), keyPrefix + ':book')),
+					h('button', {
+						key: 'bookReset',
+						className: PREFIX + '-mini',
+						type: 'button',
+						title: t('settings.resetModel'),
+						onClick: () => dropPaths([bookPath.concat('idle'), bookPath.concat('peak')])
+					}, t('settings.resetModel'))
+				]
+				const rows = []
+				for (const model of Array.isArray(models) ? models : []) {
+					const modelPath = bookPath.concat('models', String(model.id))
+					rows.push(h('div', {
+						key: model.id + ':name',
+						className: PREFIX + '-gridName',
+						'data-source': model.source,
+						title: model.id
+					}, model.id))
+					for (const column of RATE_COLUMNS) {
+						rows.push(rateCell(
+							modelPath.concat(column.period),
+							column,
+							own(own(model.defaults, column.period), column.field),
+							keyPrefix + ':' + model.id
+						))
+					}
+					rows.push(h('button', {
+						key: model.id + ':reset',
+						className: PREFIX + '-mini',
+						type: 'button',
+						title: t('settings.resetModel'),
+						onClick: () => dropPath(modelPath)
+					}, t('settings.resetModel')))
+				}
+				return h('div', { className: PREFIX + '-scroll', key: 'grid:' + keyPrefix },
+					h('div', { className: PREFIX + '-grid' }, head.concat(bookRow, rows)))
+			}
+
+			const header = h('div', { className: PREFIX + '-settingsHead', key: 'head' },
+				h('div', { className: PREFIX + '-settingsTitle' }, t('settings.title')),
+				h('div', { className: PREFIX + '-settingsDesc' }, t('settings.desc')))
+
+			if (state === null) {
+				return h('div', { className: PREFIX + '-settings' },
+					header,
+					h('div', { className: PREFIX + '-status', 'data-kind': status.kind }, status.text || t('settings.loading')))
+			}
+
+			const providers = Array.isArray(state.providers) ? state.providers : []
+			const stale = isDataObject(state.stale) ? state.stale : {}
+			const staleProviders = Array.isArray(stale.providers) ? stale.providers : []
+			const staleModels = Array.isArray(stale.models) ? stale.models : []
+			const warnings = Array.isArray(state.warnings) ? state.warnings : []
+			const writable = state.writable === true
+			const currency = typeof state.currency === 'string' ? state.currency : '¥'
+
+			const cards = providers.map((provider) => {
+				const path = ['providers', String(provider.id)]
+				const models = Array.isArray(provider.models) ? provider.models : []
+				const book = isDataObject(provider.book) ? provider.book : {}
+				const defaults = isDataObject(provider.defaults) ? provider.defaults : {}
+				return h('div', { className: PREFIX + '-card', key: 'provider:' + provider.id },
+					h('div', { className: PREFIX + '-cardHead' },
+						h('div', { className: PREFIX + '-cardName' }, String(provider.id), ' ',
+							h('span', { className: PREFIX + '-badge', 'data-source': provider.source }, t('settings.source.' + (provider.source || 'book')))),
+						h('button', {
+							className: PREFIX + '-mini',
+							type: 'button',
+							onClick: () => dropPath(path)
+						}, t('settings.resetProvider'))),
+					rulesFields(provider, path),
+					h('div', { className: PREFIX + '-hint' }, t('settings.inherited')),
+					priceGrid(
+						String(provider.id),
+						models,
+						isDataObject(defaults.book) ? defaults.book : (isDataObject(provider.book) ? provider.book : {}),
+						path.concat('pricing')
+					))
+			})
+
+			const fallback = isDataObject(state.fallback) ? state.fallback : {}
+			const fallbackCard = h('div', { className: PREFIX + '-card', key: 'fallback' },
+				h('div', { className: PREFIX + '-cardHead' },
+					h('div', { className: PREFIX + '-cardName' }, t('settings.fallback'),
+						' ', h('span', { className: PREFIX + '-badge' }, t('settings.source.book')))),
+				h('div', { className: PREFIX + '-rules' },
+					h('label', { className: PREFIX + '-field' },
+						h('span', { className: PREFIX + '-fieldLabel' }, t('settings.currency')),
+						h('input', {
+							className: PREFIX + '-input',
+							type: 'text',
+							maxLength: 8,
+							'data-override': typeof readAt(draft, ['pricing', 'currency']) === 'string' ? 'true' : 'false',
+							defaultValue: typeof readAt(draft, ['pricing', 'currency']) === 'string' ? readAt(draft, ['pricing', 'currency']) : '',
+							placeholder: currency,
+							onChange: (event) => {
+								const raw = String(event.target.value).trim()
+								const next = isDataObject(draft) ? cloneData(draft) : {}
+								if (raw === '') deleteAt(next, ['pricing', 'currency'])
+								else writeAt(next, ['pricing', 'currency'], raw)
+								commit(next)
+							}
+						}))),
+				rulesFields({ rules: fallback.rules, defaults: fallback.defaults }, []),
+				priceGrid(
+					'fallback',
+					[],
+					isDataObject(fallback.defaults) && isDataObject(fallback.defaults.book)
+						? fallback.defaults.book
+						: (isDataObject(fallback.book) ? fallback.book : {}),
+					['pricing']
+				))
+
+			const staleCard = staleProviders.length > 0 || staleModels.length > 0
+				? h('div', { className: PREFIX + '-card', key: 'stale' },
+					h('div', { className: PREFIX + '-cardHead' },
+						h('div', { className: PREFIX + '-cardName' }, t('settings.stale'))),
+					h('div', { className: PREFIX + '-hint' }, t('settings.staleHint')),
+					staleProviders.map((id) => h('button', {
+						key: 'staleP:' + id,
+						className: PREFIX + '-mini',
+						type: 'button',
+						onClick: () => dropPath(['providers', String(id)])
+					}, t('settings.staleProvider', { name: id }) + ' · ' + t('settings.clean'))),
+					staleModels.map((entry) => h('button', {
+						key: 'staleM:' + entry.provider + '/' + entry.model,
+						className: PREFIX + '-mini',
+						type: 'button',
+						onClick: () => dropPath(['providers', String(entry.provider), 'pricing', 'models', String(entry.model)])
+					}, t('settings.staleModel', { provider: entry.provider, model: entry.model }) + ' · ' + t('settings.clean'))))
+				: null
+
+			const empty = providers.length === 0 && staleCard === null
+				? h('div', { className: PREFIX + '-hint', key: 'empty' }, t('settings.empty'))
+				: null
+
+			const footer = h('div', { className: PREFIX + '-footer', key: 'footer' },
+				h('button', {
+					className: PREFIX + '-primary',
+					type: 'button',
+					disabled: !writable || !dirty || busy,
+					onClick: save
+				}, busy ? t('settings.saving') : t('settings.save')),
+				h('button', { className: PREFIX + '-mini', type: 'button', disabled: busy, onClick: load }, t('settings.reload')),
+				h('button', { className: PREFIX + '-mini', type: 'button', disabled: busy, onClick: load }, t('settings.refresh')),
+				writable ? null : h('span', { className: PREFIX + '-status' }, t('settings.readonly')),
+				h('span', { className: PREFIX + '-status', 'data-kind': status.kind }, status.text))
+
+			const warningBlock = warnings.length > 0
+				? h('div', { className: PREFIX + '-hint', key: 'warnings' }, t('settings.warnings') + warnings.join(' · '))
+				: null
+
+			const body = [header]
+			if (warningBlock !== null) body.push(warningBlock)
+			if (empty !== null) body.push(empty)
+			for (const card of cards) body.push(card)
+			body.push(fallbackCard)
+			if (staleCard !== null) body.push(staleCard)
+			body.push(footer)
+
+			return h('div', { className: PREFIX + '-settings', key: 'v' + version }, body)
+		}
+
 		return {
 			inject: ['slots', 'locale'],
 			apply(ctx, config) {
@@ -580,6 +1197,14 @@ window.__ModuleLoader__.load({
 					order: 2,
 					locale: NS
 				}, CostPill))
+				// The price-book editor lives in Settings → Plugins. Its rows come from
+				// the Host API, so it stays in sync with whatever models DSH registers.
+				ctx.slots.inject('settings.plugins.tab', () => ctx.slots.register({
+					name: 'settings.plugins.tab',
+					id: 'session-tariff-price-book',
+					order: 30,
+					label: () => fallbackT('settings.tab')
+				}, TariffSettings))
 			}
 		}
 	}

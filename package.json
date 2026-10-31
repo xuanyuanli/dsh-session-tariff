@@ -1,7 +1,7 @@
 {
   "name": "dsh-session-tariff",
-  "version": "1.2.0",
-  "description": "在输入框状态栏显示本会话估算花费，按高峰/空闲时段分档计价，点开可看各时段明细 · DSH plugin: estimated session cost in the composer status bar, split by DeepSeek peak/idle tariff periods",
+  "version": "1.3.0",
+  "description": "在输入框状态栏显示本会话估算花费，按高峰/空闲时段分档计价；价目可在设置→插件里按 DSH 实际模型与供应商编辑并即时生效 · DSH plugin: estimated session cost in the composer status bar, with an in-GUI price-book editor that follows the live provider/model catalog",
   "keywords": [
     "dsh",
     "dsh-plugin",
@@ -39,7 +39,7 @@
     "url": "https://github.com/xuanyuanli/dsh-session-tariff/issues"
   },
   "scripts": {
-    "test": "node test/fold.test.mjs"
+    "test": "node --test test/fold.test.mjs test/editor.test.mjs test/client.test.mjs"
   },
   "engines": {
     "node": ">=20"
@@ -55,7 +55,8 @@
       "platform": "web",
       "immediately": true,
       "inject": [
-        "@deepseek-ai/dsh-client-ui-conversation"
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
       ]
     }
   }

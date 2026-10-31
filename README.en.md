@@ -38,6 +38,7 @@ Peak hours are workdays 09:00-12:00 / 14:00-18:00; every other hour, weekends an
 
 - The pill prices the whole session log, not the current window, matching the token stats next to it
 - Provider-aware pricing: built-in price books and period rules for `deepseek-account` (DeepSeek official) and `bailian` / `bailian-chat` (Alibaba Cloud Bailian) work out of the box, and `config.providers` overrides them per provider
+- **Prices are editable in the GUI**: Settings → Plugins → Session cost; rows follow the providers and models DSH has registered, and saving applies immediately (written to the profile's `cordis.patch.yml`, no restart)
 - Grouped by tariff period: a period that was never used is not listed
 - Each period reports its request count plus tokens and allocated money for all four usage buckets
 - The footer states the two unit-price sets and the peak-hour rule currently in effect
@@ -123,6 +124,23 @@ After installing:
 Uninstall: `plugin_manager remove_bundle dsh-session-tariff` (or `dsh plugin remove dsh-session-tariff` for an npm install).
 
 ## Configuration
+
+### Edit prices in the GUI: Settings → Plugins → Session cost
+
+Once installed, no YAML is needed: open **Settings → Plugins** and switch to the **Session cost** tab — that page is the price-book editor.
+
+- **Rows come from DSH itself.** The page reads the providers and models DSH currently registers (`ctx.llm.listProviders()` / `listModels()`) and renders one row per model. **Add a provider or model and the row appears on the next read**, with its default already filled in from "built-in preset → provider default row → fallback book"; leave a cell empty and it keeps inheriting. **Remove a model and its row disappears**; any configuration left behind is listed under "Stale configuration" and can be dropped in one click.
+- **Editing a cell overrides only that cell.** A filled input is an explicit price; clearing it restores inheritance (it does not write 0). "Reset" on a row clears that row; "Clear every override for this provider" on a card clears the whole block.
+- **Saving applies immediately.** Saves go through the Host's `configEditor`, are written into the active profile's `cordis.patch.yml`, and the row is re-applied — the pill, the detail panel and the projection use the new prices on their next computation, with **no restart**.
+- **Period rules live on the same card** — peak windows, weekend mode, UTC offset, holidays and make-up workdays; empty means inherit (preset or fallback).
+- The **fallback book** card serves providers without a preset and also holds the currency.
+- When the footer says "Saved — the pill is already repriced", the change is on disk.
+
+> There is exactly one server surface: `GET /dsh-session-tariff/api/state` returns "live catalog + current config + writable flag", `POST /dsh-session-tariff/api/save` validates and writes. Writes are accepted only as same-origin `application/json` and pass through `sanitizeConfig()` before they touch disk — unknown fields, negative numbers, malformed `HH:MM-HH:MM` / `YYYY-MM-DD`, and prototype-pollution keys are rejected rather than persisted.
+
+Only Host *code* changes (`host.js`) need a DSH restart; client-only changes need a page refresh, and prices themselves are configuration, so they always hot-apply.
+
+The YAML shape below still works in full, and remains the right choice for "pin it in the repo" or scripted installs:
 
 ### Unit prices (client)
 
@@ -285,15 +303,21 @@ The same fields can be set either at the top level of the bundle row's `config` 
 
   Covers the `09:00` / `12:00` / `14:00` / `18:00` boundaries, weekends, public holidays, make-up workdays, `assistant/attempt` being overwritten by `message`, retries counting twice, unrelated events preserving state identity, checkpoint restore, the wire view shape, the `weekends: 'clock'` policy and per-model attribution (one `attempt` + `message` on the same model counts as a single request, two models produce two rows, and the rows sum back to the totals), plus provider-aware price-book selection: `deepseek-account` and `bailian` requests each use their own preset, `config.providers` merges field by field, two providers in one session settle separately, and a regression case where a stale global Bailian config must not price a DeepSeek-official session.
 
+- Price-book editor tests (`npm test`, three files, 28 cases, no external dependencies):
+  - [test/editor.test.mjs](test/editor.test.mjs) covers the Host half: `liveCatalog` lists the live providers / models sorted by id, a single provider whose model list fails becomes one warning and stays in the catalog, `describeState` sources (preset / config / book) plus `defaults` / `stale`, `sanitizeConfig` accepting and rejecting (unknown fields, negatives, bad windows and dates, `__proto__` / `constructor` pollution, empty-row pruning), `plainConfig` unwrapping, and the routes **wired through the real `apply()`**: `GET /state`, `POST /save` (through `configEditor.edit`, answering with fresh state), an invalid draft never writing, cross-site and form posts refused with 403, a deployment with no writable row explained, unknown paths 404.
+  - [test/client.test.mjs](test/client.test.mjs) loads `client.js` in a `vm` sandbox with a tiny React shim and actually renders the settings page, then drives `onChange` / `onClick`: rows follow the catalog, an empty input shows the inherited rate as placeholder, one edited cell produces a POST body with exactly that cell, clearing an input deletes the override instead of writing 0, stale entries are removed in one click, the missing-Host and read-only notices render, and both dictionaries cover every key the page asks for.
+
 - Runtime reconciliation: on one `deepseek-flash` session (144 requests) the two `sessionCost` periods summed to exactly the same `tokenUsage` totals — cached read 17,137,024 / uncached input 131,962 / output 87,763 — so nothing is billed twice and nothing is dropped.
 
 - Price check: compared against the official [Models & Pricing](https://api-docs.deepseek.com/quick_start/pricing) page in 2026-10; `deepseek-flash` idle 0.02 / 1 / 4 and peak 0.04 / 2 / 8 match the `deepseek-account` preset bucket by bucket, and the `deepseek-v4-pro` pair 0.15 / 4.5 / 4.5 / 13.5 and 0.30 / 9 / 9 / 27 is written into the preset from the same page. The `bailian` preset follows Bailian's pay-as-you-go tariff: idle 22:00-08:00, no weekend discount, cache hit 0.1 / 0.2.
 
-- Visuals (pill placement, dialog layout) were checked by hand in DSH Desktop; the project has no browser automation.
+- Visuals (pill placement, dialog layout) were checked by hand in DSH Desktop; the project has no browser automation, and **the settings page has not been eyeballed in a browser yet** (the DSH Web GUI needs a signed-in session). Its behaviour is covered by the `vm` render test above.
 
 ## Known limitations
 
-- The prices are static: the built-in presets cover only the three provider ids `deepseek-account`, `bailian` / `bailian-chat` (two presets) and the models listed above; any other provider / model bills at the fallback book, or add it under `config.providers.<provider>.pricing` (see "Per-model pricing"), and unlisted models fall back to that book's top-level rates; changed prices must be updated by hand
+- The prices are static: the built-in presets cover only the three provider ids `deepseek-account`, `bailian` / `bailian-chat` (two presets) and the models listed above; any other provider / model bills at the fallback book, or add it under `config.providers.<provider>.pricing` (see "Per-model pricing"), and unlisted models fall back to that book's top-level rates; changed prices must be updated by hand in the YAML path, or once in the settings page
+- The settings page reads the providers / models the Host had registered **at that moment**, so "a new model appears, a removed model disappears" is per read: leave and re-enter the page, or press "Refresh models"; it does not subscribe to catalog changes
+- Saving hot-applies through the Loader re-applying the plugin row; a stale row still participates in pricing until you remove it (the page lists it for that reason)
 - Provider attribution comes from `message.source.provider` (falling back to the route of the last `request/context`); older logs with neither bill at the fallback book
 - Model attribution comes from `message.source.model`; when it is missing (older logs, or a Host that has not published per-model rows) the whole session lands on the `defaultModel` row
 - `peakWindows` cannot express a range crossing midnight (such as `22:00-24:00`); Bailian-style "idle at night" is implemented by the built-in preset with an inverted `08:00-22:00` window, and a custom provider needs the same trick (see "Built-in preset: Alibaba Cloud Bailian")
@@ -309,8 +333,8 @@ The same fields can be set either at the top level of the bundle row's `config` 
 | --- | --- |
 | Declared range | `@deepseek-ai/dsh` `^0.2.1-rc.2` (`peerDependencies` in `package.json`) |
 | Tested on | `0.2.1-rc.3` (DSH Desktop) |
-| Dependency surface | None at runtime: the host half only uses the `sessionProjections` service, the client half only pulls `react` / `react-dom` from the module table |
-| Host keys | cordis plugin `session-tariff`, projection `sessionCost` |
+| Dependency surface | None at runtime: the host half uses `sessionProjections` (required) plus `webServer` / `configEditor` / `llm` (optional — without them there is no settings page, or it is read-only); the client half only pulls `react` / `react-dom` from the module table |
+| Host keys | cordis plugin `session-tariff`, projection `sessionCost`, settings API `/dsh-session-tariff/api` |
 
 ## Layout
 
@@ -318,11 +342,14 @@ The same fields can be set either at the top level of the bundle row's `config` 
 dsh-session-tariff/
 ├── package.json           # bundle manifest: dsh.bundle.patch + dsh.client (web client half)
 ├── cordis.patch.yml       # inserts the session-tariff row (with a config example)
-├── host.js                # host half: the sessionCost session projection (fold + provider price books + period classification)
-├── client.js              # client half: status-bar pill and breakdown dialog (React, no build)
+├── host.js                # host half: sessionCost projection + price-book API (catalog / validation / persistence)
+├── client.js              # client half: status-bar pill, breakdown dialog, and the Settings → Plugins price editor
 ├── locale/{zh,en}.json    # plugin page title and description
 ├── icon.svg               # plugin icon (original)
-└── test/fold.test.mjs     # fold unit tests
+└── test/
+    ├── fold.test.mjs      # fold unit tests
+    ├── editor.test.mjs    # host half: catalog / validation / HTTP API through the real apply()
+    └── client.test.mjs    # client half: renders the settings page in a vm and drives it
 ```
 
 The client half is a buildless `window.__ModuleLoader__.load({ id, factory })` module: it pulls `react` / `react-dom` from the DSH module table only, styles with DSH theme tokens (`--dsw-alias-*`), and depends on no Harness client package.
@@ -334,11 +361,16 @@ The client half is a buildless `window.__ModuleLoader__.load({ id, factory })` m
 node --check host.js
 node --check client.js
 
-# fold tests (no DSH, no packages)
+# every test (no DSH, no packages)
+npm test
+
+# fold tests only
 node test/fold.test.mjs
 ```
 
-After changing the host half, reinstall and restart DSH to load the new module; the client half only needs a page refresh.
+After changing the host half, restart DSH to load the new module; the client half only needs a page refresh.
+
+The settings page cannot read the Loader config (client modules receive none), so it always fetches "live catalog + current config" from the Host API and writes through `configEditor`.
 
 ## License
 

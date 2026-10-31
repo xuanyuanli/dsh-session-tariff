@@ -38,6 +38,7 @@ Peak hours are workdays 09:00-12:00 / 14:00-18:00; every other hour, weekends an
 
 - ピルは現在のウィンドウではなくセッションログ全体を集計し、隣のトークン統計と同じ範囲を扱います
 - provider ごとの料金：`deepseek-account`（DeepSeek 公式）と `bailian` / `bailian-chat`（Alibaba Cloud Bailian）の料金表と時間帯ルールを内蔵し、そのまま使えます。`config.providers` で provider ごとに上書きもできます
+- **GUI で単価を編集**：設定 → プラグイン → セッション費用。行は DSH が登録している provider / モデルに追従し、保存すると即時反映されます（プロファイルの `cordis.patch.yml` に書き込み、再起動不要）
 - 時間帯ごとにグループ化し、使われていない時間帯は表示しません
 - 各時間帯について、リクエスト数と 4 つのバケットのトークン数・按分金額を出します
 - フッターに、現在有効な 2 段階の単価とピーク時間のルールを明記します
@@ -123,6 +124,23 @@ git clone https://github.com/xuanyuanli/dsh-session-tariff.git
 アンインストール：`plugin_manager remove_bundle dsh-session-tariff`（npm で入れた場合は `dsh plugin remove dsh-session-tariff`）。
 
 ## 設定
+
+### GUI で単価を編集する：設定 → プラグイン → セッション費用
+
+導入後は YAML を触る必要はありません。**設定 → プラグイン** を開き **セッション費用** タブに切り替えると、そこが料金表のエディターです。
+
+- **行は DSH 自身から作られます。** ホストから DSH が現在登録している provider とモデルを読み（`ctx.llm.listProviders()` / `listModels()`）、モデル 1 件につき 1 行を表示します。**provider やモデルを追加すれば、次に読み込んだときに行が増え**、既定料率は「組み込みプリセット → provider の既定段 → フォールバック料金表」の順で埋まった状態になります（空欄なら継承）。**モデルを削除すればその行は消え**、残った設定は「無効になった設定」にまとまり、ワンクリックで消せます。
+- **編集したセルだけが上書きになります。** 入力があればそのセルの明示価格、空にすれば継承に戻ります（0 を書き込むわけではありません）。行の「既定に戻す」はその行を、カード右上の「この provider の上書きをすべて消す」はブロック全体を消します。
+- **保存は即時反映。** 保存はホストの `configEditor` を通り、使用中プロファイルの `cordis.patch.yml` に書き込まれてプラグイン行が再適用されます。ピル、明細パネル、プロジェクションは次回の計算から新しい価格を使い、**再起動は不要**です。
+- **時間帯ルールも同じカード**で編集できます（ピーク時間帯、週末の扱い、タイムゾーン、祝日・振替出勤日）。空欄なら継承（プリセットまたはフォールバック）。
+- **フォールバック料金表**カードはプリセットを持たない provider 用で、通貨もここで変更できます。
+- フッターに「保存しました」と出れば、変更はディスクに反映済みです。
+
+> サーバー側の入口は 1 つだけです。`GET /dsh-session-tariff/api/state` が「最新カタログ + 現在の設定 + 書き込み可否」を返し、`POST /dsh-session-tariff/api/save` が検証して書き込みます。書き込みは同一オリジンの `application/json` のみ受け付け、ディスクに書く前に `sanitizeConfig()` で厳密に検証します（未知のフィールド、負の数、不正な `HH:MM-HH:MM` / `YYYY-MM-DD`、プロトタイプ汚染のキーは拒否され、保存されません）。
+
+**ホスト半のコード（`host.js`）を変えたときだけ** DSH の再起動が必要です。クライアント半だけならページを再読み込みすればよく、料金そのものは設定なので常にホット反映されます。
+
+以下の YAML 形式も引き続き有効で、「リポジトリに固定して配布する」「スクリプトで入れる」場合に向いています。
 
 ### 単価（クライアント）
 
@@ -285,15 +303,21 @@ const DEFAULT_PRICING = {
 
   対象：`09:00` / `12:00` / `14:00` / `18:00` の境界、週末、法定休日、振替出勤日、`assistant/attempt` が `message` で上書きされること、リトライの二重計上、無関係なイベントで状態の参照が保たれること、チェックポイントからの復元、wire ビューの形、`weekends: 'clock'` の口径とモデル別の計上（同じモデルの `attempt` + `message` が 1 リクエストとして数えられ、2 つのモデルが別々の行になり、行の合計が総量に戻ること）、加えて provider ごとの料金表の選択：`deepseek-account` と `bailian` のリクエストがそれぞれのプリセットで計算されること、`config.providers` がフィールド単位でマージされること、1 つのセッションで 2 つの provider を別々に計上すること、そして「古いグローバルな Bailian 設定が DeepSeek 公式セッションの料金に使われない」という回帰ケース。
 
+- 料金表エディターのテスト（`npm test`、3 ファイル 28 ケース、外部依存なし）：
+  - [test/editor.test.mjs](test/editor.test.mjs) はホスト側を検証します。`liveCatalog` が実際の provider / モデルを id 順で返すこと、1 つの provider のモデル取得が失敗しても warning 1 件だけでその provider は残ること、`describeState` の出所（プリセット / 設定 / フォールバック）と `defaults` / `stale`、`sanitizeConfig` の受理と拒否（未知フィールド、負数、不正な時間帯と日付、`__proto__` / `constructor` の汚染、空行の削除）、`plainConfig` の展開、そして**実際の `apply()` 経由で配線された**ルート：`GET /state`、`POST /save`（`configEditor.edit` を通して新しい state を返す）、不正な下書きは書き込まない、クロスサイトやフォーム送信は 403、書き込み可能な行がない場合の説明、未知パスは 404。
+  - [test/client.test.mjs](test/client.test.mjs) は `vm` の中で `client.js` を読み込み、最小限の React shim で設定ページを実際に描画し、`onChange` / `onClick` を直接呼びます。モデル行がカタログに追従すること、空欄が継承値を placeholder として表示すること、1 セル編集したときの POST body がそのセルだけになること、入力を空にすると 0 ではなく上書きが**削除**されること、無効な項目をワンクリックで消せること、ホスト側未ロード / 読み取り専用の案内、そして中英 2 つの辞書がページの全キーを持つことを確認します。
+
 - 実行時の突き合わせ：ある `deepseek-flash` セッション（144 リクエスト）で、`sessionCost` の 2 つの時間帯の合計が同じセッションの `tokenUsage` 合計と**バケット単位で一致**しました — キャッシュ読み取り 17,137,024 / 未キャッシュ入力 131,962 / 出力 87,763。二重計上も取りこぼしもありません。
 
 - 単価の確認：2026-10 に公式の「[モデル & 価格](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)」と照合し、`deepseek-flash` のアイドル 0.02 / 1 / 4、ピーク 0.04 / 2 / 8 が `deepseek-account` プリセットとバケット単位で一致。`deepseek-v4-pro` の 0.15 / 4.5 / 4.5 / 13.5 と 0.30 / 9 / 9 / 27 も同じページの単価をプリセットに反映しています。`bailian` プリセットは百炼の従量課金の口径（22:00-08:00 がアイドル、週末割引なし、キャッシュヒット 0.1 / 0.2）に従っています。
 
-- 見た目（ピルの位置、ダイアログのレイアウト）は DSH Desktop で目視確認しました。ブラウザ自動テストはありません。
+- 見た目（ピルの位置、ダイアログのレイアウト）は DSH Desktop で目視確認しました。ブラウザ自動テストはありません。**設定ページの見た目はまだブラウザで目視確認していません**（DSH Web GUI はログインが必要です）。挙動は上の `vm` 描画テストでカバーしています。
 
 ## 既知の制限
 
-- 単価は静的な値です。組み込みプリセットは `deepseek-account`、`bailian` / `bailian-chat` の 3 つの provider id（2 つのプリセット）と上に挙げたモデルだけをカバーします。それ以外の provider / モデルはフォールバック料金表で計算されるか、`config.providers.<provider>.pricing` に追加してください（「モデルごとの単価」参照）。表にないモデルはその料金表の最上位単価にフォールバックします。改定時は手で更新が必要です
+- 単価は静的な値です。組み込みプリセットは `deepseek-account`、`bailian` / `bailian-chat` の 3 つの provider id（2 つのプリセット）と上に挙げたモデルだけをカバーします。それ以外の provider / モデルはフォールバック料金表で計算されるか、`config.providers.<provider>.pricing` に追加してください（「モデルごとの単価」参照）。表にないモデルはその料金表の最上位単価にフォールバックします。設定ページで一度直せば YAML を手で直す必要はありません
+- 設定ページが読むのは**その時点でホストに登録されている** provider / モデルなので、「新しいモデルが自動で出る / 消えたモデルが消える」は再読み込み単位です（ページを出入りするか「モデル一覧を更新」）。カタログ変更を購読はしません
+- 保存は Loader がプラグイン行を再適用することで反映されます。無効になった行も削除するまでは料金計算に参加します（そのためページに一覧表示されます）
 - provider の帰属は `message.source.provider` から取ります（なければ直近の `request/context` のルート）。どちらもない古いログはフォールバック料金表で計算します
 - モデルの帰属は `message.source.model` から取ります。取れない場合（古いログ、またはホストがモデル別の行をまだ公開していない場合）は全体が `defaultModel` の行になります
 - `peakWindows` は日付をまたぐ区間（`22:00-24:00` など）を表現できません。Bailian のような「夜間アイドル」は組み込みプリセットが `08:00-22:00` を逆に埋める形で実装しており、独自 provider でも同じ工夫が必要です（「組み込みプリセット：Alibaba Cloud Bailian（百炼）」参照）
@@ -309,8 +333,8 @@ const DEFAULT_PRICING = {
 | --- | --- |
 | 宣言範囲 | `@deepseek-ai/dsh` `^0.2.1-rc.2`（`package.json` の `peerDependencies`） |
 | 実測バージョン | `0.2.1-rc.3`（DSH Desktop） |
-| 依存の範囲 | 実行時依存なし：ホスト側は `sessionProjections` サービスのみ、クライアント側はモジュールテーブルから `react` / `react-dom` を取るだけ |
-| ホスト側キー | cordis プラグイン `session-tariff`、プロジェクション `sessionCost` |
+| 依存の範囲 | 実行時依存なし：ホスト側は `sessionProjections`（必須）と `webServer` / `configEditor` / `llm`（任意 — ない場合は設定ページが出ないか読み取り専用）、クライアント側はモジュールテーブルから `react` / `react-dom` を取るだけ |
+| ホスト側キー | cordis プラグイン `session-tariff`、プロジェクション `sessionCost`、設定ページ API `/dsh-session-tariff/api` |
 
 ## ディレクトリ構成
 
@@ -318,11 +342,14 @@ const DEFAULT_PRICING = {
 dsh-session-tariff/
 ├── package.json           # バンドル定義：dsh.bundle.patch + dsh.client（Web クライアント側）
 ├── cordis.patch.yml       # session-tariff の行を挿入（設定例つき）
-├── host.js                # ホスト側：sessionCost プロジェクション（畳み込み + provider ごとの料金表 + 時間帯分類）
-├── client.js              # クライアント側：ステータスバーのピルと内訳ダイアログ（React、ビルド不要）
+├── host.js                # ホスト側：sessionCost プロジェクション + 料金表 API（カタログ / 検証 / 保存）
+├── client.js              # クライアント側：ステータスバーのピル、内訳ダイアログ、設定 → プラグイン の料金エディター
 ├── locale/{zh,en}.json    # プラグインページに出すタイトルと説明
 ├── icon.svg               # プラグインアイコン（自作）
-└── test/fold.test.mjs     # 畳み込みロジックのユニットテスト
+└── test/
+    ├── fold.test.mjs      # 畳み込みロジックのユニットテスト
+    ├── editor.test.mjs    # ホスト側：カタログ / 検証 / HTTP API（実際の apply 経由）
+    └── client.test.mjs    # クライアント側：vm で設定ページを描画して操作
 ```
 
 クライアント側はビルド不要の `window.__ModuleLoader__.load({ id, factory })` 形式のモジュールです。`react` / `react-dom` は DSH のモジュールテーブルからのみ取得し、スタイルは DSH のテーマトークン（`--dsw-alias-*`）を使うので、Harness のクライアントパッケージには依存しません。
@@ -334,11 +361,16 @@ dsh-session-tariff/
 node --check host.js
 node --check client.js
 
-# 畳み込みテスト（DSH もパッケージも不要）
+# すべてのテスト（DSH もパッケージも不要）
+npm test
+
+# 畳み込みテストのみ
 node test/fold.test.mjs
 ```
 
-ホスト側を変更したら、再インストールして DSH を再起動しないと新しいモジュールは読み込まれません。クライアント側だけならページの再読み込みで済みます。
+ホスト側を変更したら DSH を再起動しないと新しいモジュールは読み込まれません。クライアント側だけならページの再読み込みで済みます。
+
+設定ページは Loader の設定を読めない（クライアント側モジュールには渡されない）ため、常にホスト API から「最新カタログ + 現在の設定」を取得し、`configEditor` 経由で書き込みます。
 
 ## ライセンス
 

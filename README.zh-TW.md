@@ -38,6 +38,7 @@ Peak hours are workdays 09:00-12:00 / 14:00-18:00; every other hour, weekends an
 
 - 膠囊統計的是整個工作階段紀錄（不是目前視窗），口徑與旁邊的 token 統計一致
 - 依 provider 計價：`deepseek-account`（DeepSeek 官方）與 `bailian` / `bailian-chat`（阿里雲百煉）內建價目表與時段規則，開箱即用；也可以用 `config.providers` 逐 provider 覆寫
+- **價目在 GUI 裡改**：設定 → 外掛 → 工作階段花費，列隨 DSH 註冊的 provider / 模型自動產生，改完儲存立即生效（寫入 profile 的 `cordis.patch.yml`，不用重新啟動）
 - 依時段分組：某個時段沒用過就不顯示那一列
 - 每個時段列出請求次數，以及四個用量桶的 token 數與分攤金額
 - 底部註明目前生效的兩段單價與尖峰時段規則
@@ -123,6 +124,23 @@ git clone https://github.com/xuanyuanli/dsh-session-tariff.git
 移除：請助理執行 `plugin_manager remove_bundle dsh-session-tariff`（用 npm 裝的則是 `dsh plugin remove dsh-session-tariff`）。
 
 ## 設定
+
+### 在 GUI 裡改價目：設定 → 外掛 → 工作階段花費
+
+裝好之後不用改任何 YAML：開啟 **設定 → 外掛**，切到 **工作階段花費** 分頁，那就是價目表的編輯器。
+
+- **列來自 DSH 自己**：頁面從宿主讀到 DSH 目前註冊的 provider 與模型（`ctx.llm.listProviders()` / `listModels()`），一個模型一列。**新增 provider 或模型，重新讀取就多一列**，預設費率已按「內建預設 → 供應商預設檔 → 備援價目」的順序填好，留空即沿用；**刪掉模型，那一列就不再出現**，它殘留的設定會歸到「已失效的設定」裡，一鍵清除即可。
+- **改哪一格就只覆蓋那一格**：輸入框有內容 = 該格明確計價；清空輸入框 = 恢復繼承（不是寫 0）。每列右邊「恢復預設」清掉該列；供應商卡片右上角「清除此供應商全部覆蓋」清掉整塊。
+- **儲存即生效**：儲存走宿主的 `configEditor`，寫進目前 profile 的 `cordis.patch.yml` 並重新套用外掛列——膠囊、明細面板與投影下一次計算就用新價，**不需要重新啟動**。
+- **時段規則同頁可改**：尖峰時段、週末判定、時區、假日/補班日都在同一張卡片上；空著就繼承（預設或備援）。
+- **備援價目**卡：給沒有內建預設的 provider 用，也能改幣別。
+- 頁面底部提示「已儲存」時，變更已經落到磁碟。
+
+> 服務端只有一組介面：`GET /dsh-session-tariff/api/state` 回傳「即時目錄 + 目前設定 + 可寫標記」，`POST /dsh-session-tariff/api/save` 驗證後寫入。寫入只接受同源 `application/json`，設定在落盤前先過 `sanitizeConfig()` 嚴格驗證（未知欄位、負數、格式錯誤的 `HH:MM-HH:MM` / `YYYY-MM-DD`、原型汙染鍵都直接拒絕，不會寫進 profile）。
+
+宿主半是程式碼，改了 `host.js` 才需要重新啟動 DSH；只改用戶端半重新載入頁面即可，價目本身是設定，永遠熱更新。
+
+下面的 YAML 寫法仍然完全有效，適合「一次寫死、隨儲存庫分發」，也適合腳本化安裝：
 
 ### 單價（用戶端）
 
@@ -285,17 +303,23 @@ model id 取自每筆 `assistant/message` 的 `message.source.model`，因此和
 
   涵蓋：`09:00` / `12:00` / `14:00` / `18:00` 邊界、週末、國定假日、補班日、`assistant/attempt` 被 `message` 覆蓋、重試雙計、無關事件保持狀態參照、檢查點狀態還原、wire 視圖形狀、`weekends: 'clock'` 口徑與依模型歸集（同一模型的一次 `attempt` + `message` 只記一次請求，兩個模型各自成列、各段合計回到總量），以及依 provider 選擇價目表：`deepseek-account` 與 `bailian` 的請求各用各的預設、`config.providers` 的逐欄位合併、同一工作階段裡兩個 provider 分開計帳，還有「舊的全域百煉設定不再給 DeepSeek 官方工作階段計價」的回歸案例。
 
+- 價目編輯器測試（`npm test`，三個檔案、28 個案例，無外部依賴）：
+  - [test/editor.test.mjs](test/editor.test.mjs) 涵蓋宿主半：`liveCatalog` 列出即時 provider / 模型並依 id 排序、單一 provider 取模型失敗時只記一則 warning 並保留該 provider、`describeState` 的來源（預設 / 設定 / 備援）與 `defaults` / `stale`、`sanitizeConfig` 的接受與拒絕（未知欄位、負數、壞的時間窗與日期、`__proto__` / `constructor` 汙染鍵、空列裁剪）、`plainConfig` 解包，以及**透過真實 `apply()` 裝出來的**路由：`GET /state`、`POST /save`（經 `configEditor.edit` 落盤並回新 state）、非法草稿不寫盤、跨站與表單提交被 403、沒有可寫列時給出說明、未知路徑 404。
+  - [test/client.test.mjs](test/client.test.mjs) 在 `vm` 裡載入 `client.js`，用一套極小的 React shim 真正渲染設定頁，再把 `onChange` / `onClick` 打進去：模型列隨目錄產生、留空格顯示繼承值作為 placeholder、改一格後 POST 的 body 恰好只有那一格、清空輸入框是**刪除覆蓋**而不是寫 0、失效項目一鍵清除、宿主半缺失 / 唯讀部署的提示，以及中英兩份字典覆蓋頁面用到的每個 key。
+
 - 執行時對帳：某個 `deepseek-flash` 工作階段（144 次請求）的 `sessionCost` 兩段合計與同工作階段的 `tokenUsage` 合計**逐項相等**——快取讀取 17,137,024 / 未快取輸入 131,962 / 輸出 87,763——代表既沒有重複計費也沒有漏計。
 
 - 費率核對：2026-10 對照官方[《模型 & 價格》](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)，`deepseek-flash` 離峰 0.02 / 1 / 4、尖峰 0.04 / 2 / 8 與 `deepseek-account` 預設逐項一致；`deepseek-v4-pro` 的 0.15 / 4.5 / 4.5 / 13.5 與 0.30 / 9 / 9 / 27 也依官方價目寫進預設。`bailian` 預設採百煉的按量計費口徑：22:00-08:00 離峰、週末不優惠、快取命中 0.1 / 0.2。
 
-- 視覺部分（膠囊位置、對話框排版）在 DSH 桌面版人工確認；本專案沒有瀏覽器自動化測試。
+- 視覺部分（膠囊位置、對話框排版）在 DSH 桌面版人工確認；本專案沒有瀏覽器自動化測試，**設定頁的外觀也還未在瀏覽器裡人工核對**（DSH Web GUI 需要登入）。行為面由上面的 `vm` 渲染測試覆蓋。
 
 > 註：目前外掛介面只有簡中與英文兩套字典，繁體中文介面會退回英文。
 
 ## 已知限制
 
-- 費率是靜態值：內建預設只涵蓋 `deepseek-account`、`bailian` / `bailian-chat` 三個 provider id（兩套預設）和上面列出的模型；其他 provider / 模型按備援價目表計，或自己補 `config.providers.<provider>.pricing`（見「依模型定價」），未列出的模型回落到該價目表最上層費率；改價後需手動更新
+- 費率是靜態值：內建預設只涵蓋 `deepseek-account`、`bailian` / `bailian-chat` 三個 provider id（兩套預設）和上面列出的模型；其他 provider / 模型按備援價目表計，或自己補 `config.providers.<provider>.pricing`（見「依模型定價」），未列出的模型回落到該價目表最上層費率；用設定頁改過一次就不必再手動改 YAML
+- 設定頁讀的是**宿主當時註冊**的 provider / 模型，所以「新增模型自動出現、刪除模型自動消失」以重新讀取為準：離開再回到設定頁，或按「重新整理模型清單」；頁面不會訂閱目錄變化事件
+- 儲存後由 Loader 重新套用外掛列來完成熱更新；失效的列在刪除前仍會參與計價（頁面會把它列出來）
 - provider 歸屬取自 `message.source.provider`（缺失時用最近一次 `request/context` 的路由）；兩者都沒有的舊日誌整段按備援價目表計
 - 模型歸屬取自 `message.source.model`；取不到時（舊日誌，或宿主尚未發布分模型列）整段算在 `defaultModel` 那一列
 - `peakWindows` 無法表達跨午夜的區間（如 `22:00-24:00`）；百煉這類「夜間離峰」由內建預設用 `08:00-22:00` 反向填寫實作，自訂 provider 也要同樣處理（見「內建預設：阿里雲百煉」）
@@ -311,8 +335,8 @@ model id 取自每筆 `assistant/message` 的 `message.source.model`，因此和
 | --- | --- |
 | 宣告範圍 | `@deepseek-ai/dsh` `^0.2.1-rc.2`（`package.json` 的 `peerDependencies`） |
 | 實測版本 | `0.2.1-rc.3`（DSH 桌面版） |
-| 依賴面 | 無執行時依賴：宿主半只用 `sessionProjections` 服務，用戶端半只從模組表取 `react` / `react-dom` |
-| 宿主鍵名 | cordis 外掛 `session-tariff`，投影 `sessionCost` |
+| 依賴面 | 無執行時依賴：宿主半用 `sessionProjections`（必需）與 `webServer` / `configEditor` / `llm`（選用——缺了就不提供設定頁或只能唯讀），用戶端半只從模組表取 `react` / `react-dom` |
+| 宿主鍵名 | cordis 外掛 `session-tariff`，投影 `sessionCost`，設定頁 API `/dsh-session-tariff/api` |
 
 ## 目錄結構
 
@@ -320,11 +344,14 @@ model id 取自每筆 `assistant/message` 的 `message.source.model`，因此和
 dsh-session-tariff/
 ├── package.json           # bundle 清單：dsh.bundle.patch + dsh.client（Web 用戶端半）
 ├── cordis.patch.yml       # 插入 session-tariff 這一列（含設定範例）
-├── host.js                # 宿主半：註冊 sessionCost 工作階段投影（摺疊 + provider 價目表 + 時段歸類）
-├── client.js              # 用戶端半：狀態列膠囊與明細對話框（React，無需建置）
+├── host.js                # 宿主半：sessionCost 投影 + 價目編輯 API（目錄 / 驗證 / 落盤）
+├── client.js              # 用戶端半：狀態列膠囊、明細對話框、設定 → 外掛 裡的價目編輯器
 ├── locale/{zh,en}.json    # 外掛頁顯示的標題與說明
 ├── icon.svg               # 外掛圖示（原創）
-└── test/fold.test.mjs     # 摺疊邏輯單元測試
+└── test/
+    ├── fold.test.mjs      # 摺疊邏輯單元測試
+    ├── editor.test.mjs    # 宿主半：目錄 / 驗證 / HTTP API（經真實 apply 裝配）
+    └── client.test.mjs    # 用戶端半：在 vm 裡渲染設定頁並驅動互動
 ```
 
 用戶端半是 `window.__ModuleLoader__.load({ id, factory })` 形式的無建置模組，只從 DSH 模組表取 `react` / `react-dom`，樣式用 DSH 主題權杖（`--dsw-alias-*`），不依賴任何 Harness 用戶端套件。
@@ -336,11 +363,16 @@ dsh-session-tariff/
 node --check host.js
 node --check client.js
 
-# 摺疊邏輯測試（不依賴 DSH、不依賴任何套件）
+# 全部測試（不依賴 DSH、不依賴任何套件）
+npm test
+
+# 只跑摺疊邏輯
 node test/fold.test.mjs
 ```
 
-改完宿主半後要重新安裝並重新啟動 DSH 才會載入新模組；只改用戶端半重新整理頁面即可。
+改完宿主半後要重新啟動 DSH 才會載入新模組；只改用戶端半重新整理頁面即可。
+
+設定頁讀不到 Loader 設定（用戶端模組拿不到），所以一律透過宿主 API 取得「即時目錄 + 目前設定」，並經 `configEditor` 寫入。
 
 ## 授權
 

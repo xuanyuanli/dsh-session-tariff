@@ -1,10 +1,16 @@
 /**
  * Host half of the session-tariff bundle.
  *
- * Registers the `sessionCost` session projection: it folds durable provider usage
- * per (provider, model) request and classifies each request by the tariff period
- * that the *serving provider's* rules assign to its start time (peak vs idle), so
- * the Client can price every row against that provider's book.
+ * Two jobs:
+ *
+ * 1. Registers the `sessionCost` session projection: it folds durable provider
+ *    usage per (provider, model) request and classifies each request by the
+ *    tariff period that the *serving provider's* rules assign to its start time
+ *    (peak vs idle), so the Client can price every row against that provider's book.
+ * 2. Serves the price-book editor the Client renders in Settings → Plugins:
+ *    a small JSON API (`/dsh-session-tariff/api`) over the live provider/model
+ *    catalog plus the row's own `config`. Saving goes through `configEditor`,
+ *    so an edit persists to the profile patch and applies without a restart.
  *
  * Provider resolution follows the log: a settled request carries
  * `message.source.provider` / `message.source.model`; `request/context` records
@@ -26,6 +32,9 @@ export const name = 'session-tariff'
 
 /** The projection registry is this plugin's whole purpose. */
 export const inject = ['sessionProjections']
+
+/** JSON API prefix served to this plugin's own settings page. */
+export const API_PREFIX = '/dsh-session-tariff/api'
 
 /**
  * DeepSeek official rules. `utcOffsetMinutes: 480` is Asia/Shanghai (no DST).
@@ -613,12 +622,15 @@ function rulesFor(books, provider) {
 
 /**
  * Build the `sessionCost` unit for one resolved book set.
- * @param books - `resolveBooks(config)` output; published with the view so the
- *   Client bills from the configured list rather than its own hardcoded copy
- *   (the Client never receives the loader row's `config`).
+ * @param source - `resolveBooks(config)` output, or a function returning it so a
+ *   live config write reaches the published view without re-registering the unit.
+ *   Published with the view so the Client bills from the configured list rather
+ *   than its own hardcoded copy (the Client never receives the loader row's
+ *   `config`).
  * @returns the projection definition.
  */
-export function createSessionCostDefinition(books) {
+export function createSessionCostDefinition(source) {
+	const resolve = typeof source === 'function' ? source : () => source
 	return {
 		key: 'sessionCost',
 		stateVersion: 2,
@@ -660,7 +672,7 @@ export function createSessionCostDefinition(books) {
 			const open = state.openStep
 			const sameStep = open !== null && open.turn === turn && open.step === step
 			const start = sameStep ? open.start : event.time
-			const period = classifyPeriod(start, rulesFor(books, provider))
+			const period = classifyPeriod(start, rulesFor(resolve(), provider))
 			const buckets = bucketsOf(sample)
 			const previous = state.last !== null && state.last.turn === turn && state.last.step === step ? state.last : null
 			if (previous !== null && previous.period === period && bucketsEqual(previous.buckets, buckets)) return state
@@ -711,30 +723,35 @@ export function createSessionCostDefinition(books) {
 		},
 		wire: {
 			viewSchema,
-			view: (state) => ({
-				idle: state.idle,
-				peak: state.peak,
-				peakWindows: books.fallback.rules.peakWindows,
-				weekends: books.fallback.rules.weekends,
-				pricing: books.fallback.pricing,
-				books: Object.keys(books.providers).sort().map((provider) => ({
-					provider,
-					peakWindows: books.providers[provider].rules.peakWindows,
-					weekends: books.providers[provider].rules.weekends,
-					...books.providers[provider].pricing
-				})),
-				models: Object.keys(state.rows)
-					.sort((left, right) => {
-						const a = state.rows[left]
-						const b = state.rows[right]
-						const byProvider = String(a.provider ?? '\uffff').localeCompare(String(b.provider ?? '\uffff'))
-						return byProvider !== 0 ? byProvider : String(a.model ?? '').localeCompare(String(b.model ?? ''))
-					})
-					.map((key) => {
-						const row = state.rows[key]
-						return { provider: row.provider, model: row.model, idle: row.idle, peak: row.peak }
-					})
-			})
+			view: (state) => {
+				// Resolved per read: a saved price edit is visible to the already-running
+				// unit, not only after the loader re-applies this plugin.
+				const books = resolve()
+				return {
+					idle: state.idle,
+					peak: state.peak,
+					peakWindows: books.fallback.rules.peakWindows,
+					weekends: books.fallback.rules.weekends,
+					pricing: books.fallback.pricing,
+					books: Object.keys(books.providers).sort().map((provider) => ({
+						provider,
+						peakWindows: books.providers[provider].rules.peakWindows,
+						weekends: books.providers[provider].rules.weekends,
+						...books.providers[provider].pricing
+					})),
+					models: Object.keys(state.rows)
+						.sort((left, right) => {
+							const a = state.rows[left]
+							const b = state.rows[right]
+							const byProvider = String(a.provider ?? '\uffff').localeCompare(String(b.provider ?? '\uffff'))
+							return byProvider !== 0 ? byProvider : String(a.model ?? '').localeCompare(String(b.model ?? ''))
+						})
+						.map((key) => {
+							const row = state.rows[key]
+							return { provider: row.provider, model: row.model, idle: row.idle, peak: row.peak }
+						})
+				}
+			}
 		}
 	}
 }
@@ -745,5 +762,628 @@ export function createSessionCostDefinition(books) {
  * @param config - optional tariff-rule and pricing overrides from the loader row.
  */
 export function apply(ctx, config) {
-	ctx.sessionProjections.register(createSessionCostDefinition(resolveBooks(config)))
+	// This row intentionally exports no schemastery `Config` (see the note above
+	// `plainConfig`), so the authoritative copy of the price books is the Loader
+	// entry's own `options.config`: `configEditor.edit()` persists the next config
+	// into the profile patch, updates that entry, and re-applies this plugin. Read
+	// from the entry rather than from the `config` argument so the value is the one
+	// on disk even if a future Loader stops handing the row's config to `apply`.
+	// `plainConfig` still unwraps volatile references, so this also works if a
+	// schema (and therefore hot field references) is ever added back.
+	const entry = entryOf(ctx)
+	const refs = () => {
+		const snapshot = entry === undefined || entry.options === undefined ? undefined : entry.options.config
+		return snapshot === undefined ? config : snapshot
+	}
+	const current = () => plainConfig(refs())
+
+	// Resolving the books deep-copies the presets, and the fold runs for every
+	// session event, so memoize on the identity of the unwrapped values: a
+	// volatile field returns a new snapshot only when it changed.
+	let cachedConfig
+	let cachedBooks
+	const books = () => {
+		const plain = current()
+		if (cachedBooks !== undefined && sameShallow(plain, cachedConfig)) return cachedBooks
+		cachedConfig = plain
+		cachedBooks = resolveBooks(plain)
+		return cachedBooks
+	}
+
+	ctx.sessionProjections.register(createSessionCostDefinition(books))
+
+	// The settings page is optional: without a web server (a headless deployment)
+	// the projection still works and the page simply reports that the Host half has
+	// no API. `ctx.inject` is the sanctioned way to wait for a service that may
+	// start after this plugin; the fallback registers immediately when it is
+	// already up, so this keeps working if the wait API ever changes.
+	const route = () => ({
+		kind: 'prefix',
+		path: API_PREFIX,
+		handler: (req, res) => handleApi(ctx, req, res, current)
+	})
+	const mount = (web) => web.effect(() => web.webServer.register(route()), 'session-tariff: price-book API')
+	if (typeof ctx.inject === 'function') {
+		ctx.inject(['webServer'], (web) => mount(web))
+	} else {
+		const server = ctx.get('webServer')
+		if (server !== undefined) ctx.effect(() => server.register(route()), 'session-tariff: price-book API')
+	}
+}
+
+/** Shallow identity comparison of two plain configs (volatile snapshots are frozen values). */
+function sameShallow(left, right) {
+	if (left === right) return true
+	if (!isObject(left) || !isObject(right)) return false
+	const keys = Object.keys(left)
+	if (keys.length !== Object.keys(right).length) return false
+	for (const key of keys) {
+		if (left[key] !== right[key]) return false
+	}
+	return true
+}
+
+// ---------------------------------------------------------------------------
+// Price-book editor: the Client page in Settings → Plugins
+//
+// The page must sync with the providers and models DSH actually has right now,
+// so the Host is the one that asks the `llm` registry and answers with one
+// descriptor: the live catalog with each row's *effective* rates, what those
+// rates would be without an override, and what the row's config currently says.
+// Saving is a whole-config replacement validated here and applied through
+// `configEditor`, which persists to the profile patch and reconciles the row.
+// ---------------------------------------------------------------------------
+
+/** The four billed buckets, in billing order. */
+const RATE_FIELDS = ['cacheHit', 'cacheMiss', 'cacheWrite', 'output']
+
+/** Period keys of one rate row. */
+const RATE_PERIODS = ['idle', 'peak']
+
+/** `Symbol.for('cosmokit.volatile.write')` — how a resolved volatile field is identified. */
+const VOLATILE_WRITE = Symbol.for('cosmokit.volatile.write')
+
+/** Names that must never reach a plain-object assignment built from JSON. */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'prototype', 'constructor'])
+
+/** Tariff-rule keys, shared by the flat book and every provider book. */
+const RULE_KEYS = ['utcOffsetMinutes', 'peakWindows', 'weekends', 'holidays', 'workdays']
+
+/** Pricing-block keys, shared by the flat book and every provider book. */
+const PRICING_KEYS = ['currency', 'defaultModel', ...RATE_FIELDS, ...RATE_PERIODS, 'models']
+
+/** A provider book is a rule set plus a price table. */
+const PROVIDER_KEYS = [...RULE_KEYS, 'pricing']
+
+/** Top-level keys of the loader row's config. */
+const TOP_KEYS = [...PROVIDER_KEYS, 'providers']
+
+const WINDOW_PATTERN = /^\d{2}:\d{2}-\d{2}:\d{2}$/
+const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/
+const MAX_BODY_BYTES = 256 * 1024
+
+/** A one-line diagnostic from any thrown value. */
+function messageOf(error) {
+	if (error instanceof Error) return error.message
+	return String(error)
+}
+
+/** Whether a resolved config field is a live volatile reference. */
+function isVolatileRef(value) {
+	return isObject(value) && typeof value.get === 'function' && VOLATILE_WRITE in value
+}
+
+/** Follow volatile references down to plain data. */
+function unlocked(value) {
+	return isVolatileRef(value) ? unlocked(value.get()) : value
+}
+
+/**
+ * Plain, detached data from a loader config whose fields are volatile references.
+ * @param config - the value `apply` received.
+ * @returns a plain config object (`{}` when absent).
+ */
+export function plainConfig(config) {
+	const source = unlocked(config)
+	if (!isObject(source)) return {}
+	const plain = {}
+	for (const key of Object.keys(source)) plain[key] = unlocked(source[key])
+	return plain
+}
+
+/*
+ * This row deliberately exports no schemastery `Config`. A development install
+ * links this package into the profile, and Node resolves a bare specifier from
+ * the package's realpath rather than from the profile, so a static harness import
+ * here would fail to load. The price books are validated by `sanitizeConfig()`
+ * below instead, before anything is persisted, and the Loader applies the written
+ * config through its normal path.
+ */
+
+/**
+ * The providers and models DSH has registered right now.
+ *
+ * `listProviders()` is synchronous metadata; `listModels()` asks the adapter and
+ * may fail or be slow for one route, so a failure is reported as a warning and
+ * leaves that provider in the catalog with no models rather than dropping it.
+ *
+ * @param llm - the host `llm` service, or undefined when the deployment has none.
+ * @returns `{ providers: [{ id, name, models: [{ id, name }] }], warnings }`.
+ */
+export async function liveCatalog(llm) {
+	const warnings = []
+	if (llm === undefined || llm === null || typeof llm.listProviders !== 'function') {
+		return { providers: [], warnings: ['llm service is not composed; price rows cannot follow the live catalog'] }
+	}
+	let listed = []
+	try {
+		listed = llm.listProviders() ?? []
+	} catch (error) {
+		return { providers: [], warnings: ['listProviders failed: ' + messageOf(error)] }
+	}
+	const providers = []
+	for (const info of listed) {
+		const id = text(info === null || info === undefined ? undefined : info.id)
+		if (id === undefined) continue
+		const models = []
+		if (typeof llm.listModels === 'function') {
+			try {
+				for (const model of (await llm.listModels(id)) ?? []) {
+					const modelId = text(model === null || model === undefined ? undefined : model.id)
+					if (modelId === undefined) continue
+					models.push({ id: modelId, name: text(model.name) ?? modelId })
+				}
+			} catch (error) {
+				warnings.push(id + ': model list failed: ' + messageOf(error))
+			}
+		}
+		models.sort((left, right) => left.id.localeCompare(right.id))
+		providers.push({ id, name: text(info.name) ?? id, models })
+	}
+	providers.sort((left, right) => left.id.localeCompare(right.id))
+	return { providers, warnings }
+}
+
+/** Whether a provider override names at least one tariff rule. */
+function overridesRules(override) {
+	for (const key of RULE_KEYS) if (override[key] !== undefined) return true
+	return false
+}
+
+/**
+ * Turn the row's config plus the live catalog into the descriptor the settings
+ * page renders.
+ *
+ * A live provider always appears, whether or not it has a preset or an override:
+ * that is what makes a newly added provider usable at once. A model that DSH no
+ * longer reports is not editable; it is listed under `stale` so the page can
+ * offer to remove its leftover override.
+ *
+ * @param config - plain config of this row (possibly `{}`).
+ * @param catalog - `liveCatalog()` output.
+ * @returns the wire descriptor (`providers`, `fallback`, `stale`, `warnings`).
+ */
+export function describeState(config, catalog) {
+	const given = isObject(config) ? config : {}
+	const books = resolveBooks(given)
+	const overrides = isObject(given.providers) ? given.providers : {}
+	const live = isObject(catalog) ? catalog : { providers: [], warnings: [] }
+
+	const providers = []
+	const staleModels = []
+	const seen = new Set()
+	for (const entry of Array.isArray(live.providers) ? live.providers : []) {
+		const id = text(isObject(entry) ? entry.id : undefined)
+		if (id === undefined || seen.has(id)) continue
+		seen.add(id)
+		const preset = BOOK_PRESETS[id]
+		const override = isObject(overrides[id]) ? overrides[id] : undefined
+		const book = books.providers[id] === undefined ? books.fallback : books.providers[id]
+		const source = preset !== undefined ? 'preset' : override !== undefined ? 'config' : 'book'
+		const overridePricing = override !== undefined && isObject(override.pricing) ? override.pricing : undefined
+		const overrideModels = overridePricing !== undefined && isObject(overridePricing.models) ? overridePricing.models : {}
+		const leftover = new Set(Object.keys(overrideModels))
+
+		const models = []
+		for (const model of Array.isArray(entry.models) ? entry.models : []) {
+			const modelId = text(isObject(model) ? model.id : undefined)
+			if (modelId === undefined) continue
+			if (models.some((known) => known.id === modelId)) continue
+			leftover.delete(modelId)
+			const configured = isObject(overrideModels[modelId]) ? overrideModels[modelId] : undefined
+			const presetRow = preset !== undefined && isObject(preset.pricing.models[modelId])
+			models.push({
+				id: modelId,
+				name: text(model.name) ?? modelId,
+				source: configured !== undefined ? 'config' : presetRow ? 'preset' : 'book',
+				rates: {
+					idle: resolveRates(configured === undefined ? undefined : configured.idle, book.pricing.idle),
+					peak: resolveRates(configured === undefined ? undefined : configured.peak, book.pricing.peak)
+				},
+				defaults: { idle: book.pricing.idle, peak: book.pricing.peak }
+			})
+		}
+		for (const modelId of leftover) staleModels.push({ provider: id, model: modelId })
+		// What this provider's rows would inherit with no override at all: the
+		// preset when one exists, else the flat book. The editor needs it to show a
+		// placeholder and to decide whether a row is a real override.
+		const inherit = preset === undefined
+			? { rules: books.fallback.rules, pricing: books.fallback.pricing }
+			: { rules: preset.rules, pricing: preset.pricing }
+		providers.push({
+			id,
+			name: text(entry.name) ?? id,
+			source,
+			rules: { ...book.rules, source: override !== undefined && overridesRules(override) ? 'config' : source },
+			book: { idle: book.pricing.idle, peak: book.pricing.peak },
+			defaults: {
+				rules: { ...inherit.rules },
+				book: { idle: inherit.pricing.idle, peak: inherit.pricing.peak }
+			},
+			models
+		})
+	}
+
+	const staleProviders = Object.keys(overrides)
+		.filter((id) => isObject(overrides[id]) && !seen.has(id))
+		.sort()
+	staleModels.sort((left, right) => left.provider.localeCompare(right.provider) || left.model.localeCompare(right.model))
+
+	return {
+		providers,
+		fallback: {
+			source: 'flat',
+			rules: { ...books.fallback.rules, source: 'flat' },
+			book: { idle: books.fallback.pricing.idle, peak: books.fallback.pricing.peak },
+			defaults: {
+				rules: { ...DEFAULT_RULES },
+				book: { idle: DEFAULT_PRICING.idle, peak: DEFAULT_PRICING.peak }
+			}
+		},
+		stale: { providers: staleProviders, models: staleModels },
+		warnings: Array.isArray(live.warnings) ? live.warnings.filter((warning) => typeof warning === 'string') : []
+	}
+}
+
+/**
+ * Read one numeric rate: absent stays absent, anything present must be a finite
+ * non-negative number (a numeric string is accepted, JSON never produces one).
+ */
+function takeRate(value, path, fail) {
+	if (value === undefined || value === null) return undefined
+	const number = Number(value)
+	if (!Number.isFinite(number) || number < 0) {
+		fail(path + ' must be a non-negative number')
+		return undefined
+	}
+	return number
+}
+
+/** One `{ cacheHit, cacheMiss, cacheWrite, output }` block, or undefined when empty. */
+function takeRates(value, path, fail) {
+	if (!isObject(value)) {
+		fail(path + ' must be an object')
+		return undefined
+	}
+	const rates = {}
+	for (const field of RATE_FIELDS) {
+		const rate = takeRate(value[field], path + '.' + field, fail)
+		if (rate !== undefined) rates[field] = rate
+	}
+	return Object.keys(rates).length > 0 ? rates : undefined
+}
+
+/** One per-model row: optional flat fields plus `idle` / `peak`. */
+function takeModelRow(value, path, fail) {
+	if (!isObject(value)) {
+		fail(path + ' must be an object')
+		return undefined
+	}
+	const row = {}
+	for (const key of Object.keys(value)) {
+		if (!RATE_FIELDS.includes(key) && !RATE_PERIODS.includes(key)) {
+			fail(path + '.' + key + ' is not a rate field')
+			return undefined
+		}
+	}
+	for (const field of RATE_FIELDS) {
+		const rate = takeRate(value[field], path + '.' + field, fail)
+		if (rate !== undefined) row[field] = rate
+	}
+	for (const period of RATE_PERIODS) {
+		if (value[period] === undefined) continue
+		const rates = takeRates(value[period], path + '.' + period, fail)
+		if (rates !== undefined) row[period] = rates
+	}
+	return Object.keys(row).length > 0 ? row : undefined
+}
+
+/** One key of a `providers` / `models` map: a real, bounded, non-reserved id. */
+function takeId(value, path, fail) {
+	if (typeof value !== 'string' || value.length === 0) {
+		fail(path + ' must be a non-empty string')
+		return false
+	}
+	if (value.length > 200) {
+		fail(path + ' is too long')
+		return false
+	}
+	if (FORBIDDEN_KEYS.has(value)) {
+		fail(path + ' uses a reserved name')
+		return false
+	}
+	return true
+}
+
+/** One price table. */
+function takePricing(value, path, fail) {
+	if (value === undefined) return undefined
+	if (!isObject(value)) {
+		fail(path + ' must be an object')
+		return undefined
+	}
+	for (const key of Object.keys(value)) {
+		if (!PRICING_KEYS.includes(key)) {
+			fail(path + '.' + key + ' is not a pricing field')
+			return undefined
+		}
+	}
+	const pricing = {}
+	if (value.currency !== undefined) {
+		const currency = String(value.currency)
+		if (currency.length === 0 || currency.length > 8) fail(path + '.currency must be 1-8 characters')
+		else pricing.currency = currency
+	}
+	if (value.defaultModel !== undefined) {
+		const model = String(value.defaultModel)
+		if (model.length === 0 || model.length > 200) fail(path + '.defaultModel must be 1-200 characters')
+		else pricing.defaultModel = model
+	}
+	for (const field of RATE_FIELDS) {
+		const rate = takeRate(value[field], path + '.' + field, fail)
+		if (rate !== undefined) pricing[field] = rate
+	}
+	for (const period of RATE_PERIODS) {
+		if (value[period] === undefined) continue
+		const rates = takeRates(value[period], path + '.' + period, fail)
+		if (rates !== undefined) pricing[period] = rates
+	}
+	if (value.models !== undefined) {
+		if (!isObject(value.models)) {
+			fail(path + '.models must be an object')
+		} else {
+			const models = {}
+			for (const id of Object.keys(value.models)) {
+				if (!takeId(id, path + '.models', fail)) continue
+				const row = takeModelRow(value.models[id], path + '.models.' + id, fail)
+				if (row !== undefined) models[id] = row
+			}
+			pricing.models = models
+		}
+	}
+	return Object.keys(pricing).length > 0 ? pricing : undefined
+}
+
+/** The five tariff-rule fields. */
+function takeRules(value, path, fail) {
+	const rules = {}
+	if (value.utcOffsetMinutes !== undefined) {
+		const offset = Number(value.utcOffsetMinutes)
+		if (!Number.isFinite(offset) || Math.abs(offset) > 24 * 60) fail(path + '.utcOffsetMinutes must be minutes within ±1440')
+		else rules.utcOffsetMinutes = offset
+	}
+	for (const key of ['peakWindows', 'holidays', 'workdays']) {
+		if (value[key] === undefined) continue
+		if (!Array.isArray(value[key])) {
+			fail(path + '.' + key + ' must be an array')
+			continue
+		}
+		const pattern = key === 'peakWindows' ? WINDOW_PATTERN : DATE_PATTERN
+		const items = []
+		for (const item of value[key]) {
+			const entry = typeof item === 'string' ? item.trim() : ''
+			if (!pattern.test(entry)) {
+				fail(path + '.' + key + ' has an invalid entry: ' + JSON.stringify(item))
+				continue
+			}
+			items.push(entry)
+		}
+		rules[key] = items
+	}
+	if (value.weekends !== undefined) {
+		if (value.weekends !== 'idle' && value.weekends !== 'clock') fail(path + '.weekends must be "idle" or "clock"')
+		else rules.weekends = value.weekends
+	}
+	return rules
+}
+
+/**
+ * Validate a whole draft config and return the object to persist.
+ *
+ * The Client edits the row's config wholesale, so this is the only gate between
+ * a browser and the profile patch: unknown keys are refused (a typo must not
+ * silently do nothing), every number and pattern is checked, and the result is a
+ * freshly built object, so no JSON key can reach a prototype.
+ *
+ * @param draft - the `config` value posted by the settings page.
+ * @returns `{ config }` on success, `{ error }` describing the first problems.
+ */
+export function sanitizeConfig(draft) {
+	if (!isObject(draft)) return { error: 'config must be an object' }
+	const failures = []
+	const fail = (problem) => {
+		if (failures.length < 4) failures.push(problem)
+	}
+	for (const key of Object.keys(draft)) {
+		if (!TOP_KEYS.includes(key)) fail('unknown field "' + key + '"')
+	}
+	const config = { ...takeRules(draft, 'config', fail) }
+	const pricing = takePricing(draft.pricing === undefined ? undefined : draft.pricing, 'config.pricing', fail)
+	if (draft.pricing !== undefined) {
+		if (pricing !== undefined) config.pricing = pricing
+	}
+	if (draft.providers !== undefined) {
+		if (!isObject(draft.providers)) {
+			fail('config.providers must be an object')
+		} else {
+			const providers = {}
+			for (const id of Object.keys(draft.providers)) {
+				if (!takeId(id, 'config.providers', fail)) continue
+				const book = draft.providers[id]
+				if (!isObject(book)) {
+					fail('config.providers.' + id + ' must be an object')
+					continue
+				}
+				for (const key of Object.keys(book)) {
+					if (!PROVIDER_KEYS.includes(key)) fail('config.providers.' + id + '.' + key + ' is not a known field')
+				}
+				const clean = { ...takeRules(book, 'config.providers.' + id, fail) }
+				const bookPricing = takePricing(book.pricing === undefined ? undefined : book.pricing, 'config.providers.' + id + '.pricing', fail)
+				if (book.pricing !== undefined && bookPricing !== undefined) clean.pricing = bookPricing
+				providers[id] = clean
+			}
+			config.providers = providers
+		}
+	}
+	if (failures.length > 0) return { error: failures.join('; ') }
+	return { config }
+}
+
+/** The loader entry this plugin row owns, when the deployment exposes one. */
+function entryOf(ctx) {
+	const fiber = ctx === null || ctx === undefined ? undefined : ctx.fiber
+	const entry = fiber === null || fiber === undefined ? undefined : fiber.entry
+	if (entry !== undefined && entry !== null) return entry
+	const editor = ctx.get('configEditor')
+	if (editor === undefined || typeof editor.entries !== 'function') return undefined
+	try {
+		for (const candidate of editor.entries() ?? []) {
+			const options = candidate === null || candidate === undefined ? undefined : candidate.options
+			const name = options === undefined || options === null ? candidate?.name : options.name
+			if (name === 'dsh-session-tariff') return candidate
+		}
+	} catch (_unreadable) {
+		return undefined
+	}
+	return undefined
+}
+
+/** The profile patch id of one entry, for diagnostics in the page. */
+function entryIdOf(entry) {
+	const options = entry === null || entry === undefined ? undefined : entry.options
+	return text(options === undefined || options === null ? entry?.id : options.id)
+}
+
+function sendJson(res, status, payload) {
+	const body = JSON.stringify(payload)
+	res.statusCode = status
+	res.setHeader('content-type', 'application/json; charset=utf-8')
+	res.setHeader('cache-control', 'no-store')
+	res.setHeader('content-length', Buffer.byteLength(body))
+	res.end(body)
+}
+
+/** Read a bounded request body as UTF-8. */
+function readBody(req) {
+	return new Promise((resolve, reject) => {
+		const chunks = []
+		let bytes = 0
+		req.on('data', (chunk) => {
+			bytes += chunk.length
+			if (bytes > MAX_BODY_BYTES) {
+				reject(new Error('request body too large'))
+				req.destroy()
+				return
+			}
+			chunks.push(chunk)
+		})
+		req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+		req.on('error', reject)
+	})
+}
+
+/**
+ * Refuse a cross-site write. The page is same-origin, so a browser write sends
+ * `application/json` (not settable by a plain HTML form) and, when it sends an
+ * `Origin`, that origin must be this server. A request without either header is
+ * a local tool call, not a browser form post.
+ */
+function crossSite(req) {
+	const origin = req.headers.origin
+	if (typeof origin === 'string' && origin.length > 0 && origin !== 'null') {
+		let host
+		try {
+			host = new URL(origin).host
+		} catch (_invalid) {
+			return true
+		}
+		if (host !== req.headers.host) return true
+	}
+	const type = req.headers['content-type']
+	return typeof type !== 'string' || !type.toLowerCase().startsWith('application/json')
+}
+
+/** Build the descriptor plus the fields only the Host knows. */
+async function stateOf(ctx, config) {
+	const catalog = await liveCatalog(ctx.get('llm'))
+	const entry = entryOf(ctx)
+	const editor = ctx.get('configEditor')
+	return {
+		ok: true,
+		entryId: entryIdOf(entry),
+		writable: entry !== undefined && editor !== undefined,
+		currency: resolveFlatBook(config).pricing.currency,
+		config,
+		...describeState(config, catalog)
+	}
+}
+
+/** One JSON API request. */
+async function handleApi(ctx, req, res, current) {
+	const url = new URL(req.url ?? '/', 'http://localhost')
+	const path = url.pathname.slice(API_PREFIX.length) || '/'
+	if (path === '/state' && req.method === 'GET') {
+		sendJson(res, 200, await stateOf(ctx, current()))
+		return
+	}
+	if (path === '/save' && req.method === 'POST') {
+		if (crossSite(req)) {
+			sendJson(res, 403, { ok: false, error: 'cross-site request refused' })
+			return
+		}
+		let body
+		try {
+			body = await readBody(req)
+		} catch (error) {
+			sendJson(res, 413, { ok: false, error: messageOf(error) })
+			return
+		}
+		let parsed
+		try {
+			parsed = JSON.parse(body)
+		} catch (_invalid) {
+			sendJson(res, 200, { ok: false, error: 'request body is not JSON' })
+			return
+		}
+		const sanitized = sanitizeConfig(isObject(parsed) ? parsed.config : undefined)
+		if (sanitized.error !== undefined) {
+			sendJson(res, 200, { ok: false, error: sanitized.error })
+			return
+		}
+		const editor = ctx.get('configEditor')
+		const entry = entryOf(ctx)
+		if (editor === undefined || entry === undefined) {
+			sendJson(res, 200, { ok: false, error: 'this deployment exposes no writable profile row for the plugin' })
+			return
+		}
+		try {
+			await editor.edit(entry, () => sanitized.config)
+		} catch (error) {
+			sendJson(res, 200, { ok: false, error: 'write failed: ' + messageOf(error) })
+			return
+		}
+		sendJson(res, 200, { ok: true, state: await stateOf(ctx, sanitized.config) })
+		return
+	}
+	sendJson(res, 404, { ok: false, error: 'not found' })
 }

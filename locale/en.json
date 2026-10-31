@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "Session Cost",
-    "description": "Adds an estimated-cost pill to the composer status bar, split by DeepSeek peak/idle tariff periods, with a per-period token breakdown on click."
+    "description": "Adds an estimated-cost pill to the composer status bar, priced with each provider's own peak/idle tariff; click for a per-period breakdown, and edit the price books (following the live model/provider catalog) in Settings → Plugins → Session cost."
   }
 }

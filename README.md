@@ -38,6 +38,7 @@
 
 - 胶囊显示本会话（整个日志，不是当前窗口）的估算花费，口径与旁边的 token 统计一致
 - 按 provider 计价：`deepseek-account`（DeepSeek 官方）与 `bailian` / `bailian-chat`（阿里云百炼）内置价目表和时段规则，开箱即用；也可以用 `config.providers` 逐 provider 覆盖
+- **价目在 GUI 里改**：设置 → 插件 → 会话花费，行随 DSH 注册的 provider / 模型自动生成，改完保存立即生效（写入 profile 的 `cordis.patch.yml`，不用重启）
 - 按时段分组：只在某个时段用过量就只显示那一档
 - 每个时段给出请求次数与四个用量桶的 token 数、分摊金额
 - 底部注明当前生效的两档单价与时段规则
@@ -123,6 +124,23 @@ git clone https://github.com/xuanyuanli/dsh-session-tariff.git
 卸载：让助手执行 `plugin_manager remove_bundle dsh-session-tariff`（用 npm 装的则 `dsh plugin remove dsh-session-tariff`）。
 
 ## 配置
+
+### 在 GUI 里改价目：设置 → 插件 → 会话花费
+
+装好之后不用改任何 YAML：打开 **设置 → 插件**，切到 **会话花费** 标签页，就是这本价目表的编辑器。
+
+- **行来自 DSH 自己**：页面从宿主读到 DSH 当前注册的 provider 与模型（`ctx.llm.listProviders()` / `listModels()`），一个模型一行。**新增 provider 或模型，刷新页面就多一行**，默认费率已经按「内置预设 → 供应商默认档 → 兜底价目」的顺序填好，留空即沿用；**删掉模型，那一行就不再出现**，它残留的配置会归到「已失效的配置」里，一键清除即可。
+- **改哪一格就只覆盖那一格**：输入框有内容 = 该格显式定价；清空输入框 = 恢复继承（不是写 0）。每行右边「恢复默认」清掉该行；供应商卡片右上角「清除本供应商全部覆盖」清掉整块。
+- **保存即生效**：保存走宿主的 `configEditor`，写进当前 profile 的 `cordis.patch.yml` 并重新应用插件行——胶囊、明细面板和投影下一次计算就用新价，**不需要重启**。
+- **时段规则同页可改**：高峰窗口、周末口径、时区、节假日/调休工作日都在同一张卡片上；空着就继承（预设或兜底）。
+- **兜底价目**卡：给没有内置预设的 provider 用，也能改币种。
+- 页面底部提示「已保存，胶囊已按新价重算」时，改动已经落到磁盘。
+
+> 服务端只有一套接口：`GET /dsh-session-tariff/api/state` 返回「实时目录 + 当前配置 + 可写标记」，`POST /dsh-session-tariff/api/save` 校验后写盘。写入只接受同源 `application/json` 请求，配置在落盘前先过 `sanitizeConfig()` 严格校验（未知字段、负数、坏的 `HH:MM-HH:MM` / `YYYY-MM-DD`、原型污染键都直接拒绝，不会写进 profile）。
+
+宿主半是代码，改了 `host.js` 才需要重启 DSH；只改客户端半刷新页面即可，价目本身是配置，永远热更新。
+
+下面的 YAML 写法仍然完全有效，适合「一次写死、随仓库分发」，也适合脚本化安装：
 
 ### 单价（客户端）
 
@@ -285,15 +303,23 @@ const DEFAULT_PRICING = {
 
   覆盖：`09:00` / `12:00` / `14:00` / `18:00` 边界、周末、法定节假日、调休上班日、`assistant/attempt` 被 `message` 覆盖、重试双计、无关事件保持状态引用、检查点状态复原、wire 视图形状、`weekends: 'clock'` 口径与按模型归集（同一模型的一次 `attempt` + `message` 只记一次请求，两个模型各自成行、各段合计回到总量），以及按 provider 选择价目表：`deepseek-account` 与 `bailian` 的请求各用各的预设、`config.providers` 的逐字段合并、同一会话里两个 provider 分开计账，还有「旧的全局百炼配置不再给 DeepSeek 官方会话计价」的回归用例。
 
+- 价目编辑器测试（`npm test`，三个文件、28 个用例，无外部依赖）：
+
+  - [test/editor.test.mjs](test/editor.test.mjs) 覆盖宿主半：`liveCatalog` 列出实时 provider / 模型并按 id 排序、单个 provider 取模型失败时只记一条 warning 并保留该 provider、`describeState` 的下标（预设 / 配置 / 兜底）与 `defaults` / `stale`、`sanitizeConfig` 的接受与拒绝（未知字段、负数、坏的时间窗与日期、`__proto__` / `constructor` 污染键、空行裁剪）、`plainConfig` 解包、以及**通过真实 `apply()` 装出来的**路由：`GET /state`、`POST /save`（经 `configEditor.edit` 落盘并回新 state）、非法草稿不写盘、跨站与表单提交被 403、没有可写行时给出说明、未知路径 404。
+  - [test/client.test.mjs](test/client.test.mjs) 在 `vm` 里加载 `client.js`，用一套极小的 React shim 真正渲染设置页，再把 `onChange` / `onClick` 打进去，断言：模型行随目录生成、留空格显示继承值作为 placeholder、改一格后 POST 的 body 恰好只有那一格、清空输入框是**删除覆盖**而不是写 0、失效项一键清除、宿主半缺失 / 只读部署的提示、四种按钮状态，以及中英两份词典覆盖页面用到的每个 key。
+  - 运行方式：`npm test`（等价于 `node --test test/fold.test.mjs test/editor.test.mjs test/client.test.mjs`）。
+
 - 运行时对账：某个 `deepseek-flash` 会话（144 次请求）的 `sessionCost` 两档合计与同会话 `tokenUsage` 合计**逐项相等**——缓存读取 17,137,024 / 未缓存输入 131,962 / 输出 87,763——说明既没有重复计费也没有漏计。
 
 - 价目核对：2026-10 对照官方[《模型 & 价格》](https://api-docs.deepseek.com/zh-cn/quick_start/pricing)，`deepseek-flash` 空闲 0.02 / 1 / 4、高峰 0.04 / 2 / 8 与 `deepseek-account` 预设逐项一致；`deepseek-v4-pro` 的 0.15 / 4.5 / 4.5 / 13.5 与 0.30 / 9 / 9 / 27 也按官方价目写进预设。`bailian` 预设采用百炼的按量计费口径：22:00-08:00 空闲、周末不优惠、缓存命中 0.1 / 0.2。
 
-- 视觉部分（胶囊位置、对话框排版）在 DSH 桌面版中人工确认；本项目没有浏览器自动化测试。
+- 视觉部分（胶囊位置、对话框排版）在 DSH 桌面版中人工确认；**设置页的观感尚未在浏览器里人工核验**（本项目没有浏览器自动化测试，DSH Web GUI 需要登录会话），逻辑层由上面的 `vm` 渲染测试覆盖。
 
 ## 已知限制
 
 - 价目是静态值：内置预设只覆盖 `deepseek-account`、`bailian` / `bailian-chat` 三个 provider id（两套预设）和上面列出的模型；其他 provider / 模型按兜底价目表计，或自己补 `config.providers.<provider>.pricing`（见「按模型定价」），未列出的模型回落到该价目表顶层的费率；改价后需手动更新
+- 设置页读的是**宿主当时注册**的 provider / 模型，所以「新增模型自动出现、删除模型自动消失」以页面重新读取为准：切走再切回设置页、或点「刷新模型列表」；页面不会订阅目录变化事件
+- 保存后由 Loader 重新应用插件行来完成热更新；如果某个 provider 的费率只写在被删掉的失效行里，删除前该行仍参与计价（页面会把它列出来）
 - provider 归属取自 `message.source.provider`（缺失时用最近一次 `request/context` 的路由）；两者都没有的老日志整段按兜底价目表计
 - 模型归属取自 `message.source.model`；拿不到时（老日志、或宿主尚未发布分模型行）整段算作 `defaultModel` 那一行
 - `peakWindows` 不能表达跨零点的区间（如 `22:00-24:00`）；百炼这类「夜间闲时」由内置预设用 `08:00-22:00` 反填实现，自定义 provider 也要同样处理（见「内置预设：阿里云百炼」）
@@ -309,8 +335,8 @@ const DEFAULT_PRICING = {
 | --- | --- |
 | 声明范围 | `@deepseek-ai/dsh` `^0.2.1-rc.2`（`package.json` 的 `peerDependencies`） |
 | 实测版本 | `0.2.1-rc.3`（DSH 桌面版） |
-| 依赖面 | 无运行时依赖：宿主半只用 `sessionProjections` 服务，客户端半只从模块表取 `react` / `react-dom` |
-| 宿主键名 | cordis 插件 `session-tariff`，投影 `sessionCost` |
+| 依赖面 | 无运行时依赖：宿主半只用 `sessionProjections`（必需）与 `webServer` / `configEditor` / `llm`（可选，缺了就不提供设置页或只读），客户端半只从模块表取 `react` / `react-dom` |
+| 宿主键名 | cordis 插件 `session-tariff`，投影 `sessionCost`，设置页 API `/dsh-session-tariff/api` |
 
 ## 目录结构
 
@@ -318,14 +344,17 @@ const DEFAULT_PRICING = {
 dsh-session-tariff/
 ├── package.json           # bundle 清单：dsh.bundle.patch + dsh.client（Web 客户端半）
 ├── cordis.patch.yml       # 插入 session-tariff 这一行（含配置示例）
-├── host.js                # 宿主半：注册 sessionCost 会话投影（折叠 + provider 价目表 + 时段归类）
-├── client.js              # 客户端半：状态栏胶囊与明细对话框（React，无构建）
+├── host.js                # 宿主半：sessionCost 投影 + 价目编辑 API（目录 / 校验 / 落盘）
+├── client.js              # 客户端半：状态栏胶囊、明细对话框、设置→插件 里的价目编辑器
 ├── locale/{zh,en}.json    # 插件在插件页显示的标题与描述
 ├── icon.svg               # 插件图标（原创）
-└── test/fold.test.mjs     # 折叠逻辑单元测试
+└── test/
+    ├── fold.test.mjs      # 折叠逻辑单元测试
+    ├── editor.test.mjs    # 宿主半：目录 / 校验 / HTTP API（经真实 apply 装配）
+    └── client.test.mjs    # 客户端半：vm 里渲染设置页并驱动交互
 ```
 
-客户端半是 `window.__ModuleLoader__.load({ id, factory })` 形式的无构建模块，只从 DSH 的模块表取 `react` / `react-dom`，样式用 DSH 主题令牌（`--dsw-alias-*`），不依赖任何 Harness 客户端包。
+客户端半是 `window.__ModuleLoader__.load({ id, factory })` 形式的无构建模块，只从 DSH 的模块表取 `react` / `react-dom`，样式用 DSH 主题令牌（`--dsw-alias-*`），不依赖任何 Harness 客户端包。设置页不读 Loader 配置（客户端模块拿不到），一律通过宿主 API 取「实时目录 + 当前配置」。
 
 ## 开发
 
@@ -334,11 +363,14 @@ dsh-session-tariff/
 node --check host.js
 node --check client.js
 
-# 折叠逻辑测试（不依赖 DSH、不依赖任何包）
+# 全部测试（不依赖 DSH、不依赖任何包）
+npm test
+
+# 只跑折叠逻辑
 node test/fold.test.mjs
 ```
 
-改完宿主半后重新安装并重启 DSH 才会装载新模块；只改客户端半刷新页面即可。
+改完宿主半后重启 DSH 才会装载新模块；只改客户端半刷新页面即可。
 
 ## 许可
 
