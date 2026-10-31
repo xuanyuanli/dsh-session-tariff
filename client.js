@@ -8,6 +8,9 @@ window.__ModuleLoader__.load({
 		const NS = 'session-cost'
 		const STAT_ID = 'cost'
 		const PREFIX = 'scost'
+		/** This package's name and the Loader row it declares, as the Plugins page keys them. */
+		const PKG_NAME = 'dsh-session-tariff'
+		const ROW_ID = 'session-tariff'
 		const MILLION = 1e6
 
 		/**
@@ -69,6 +72,7 @@ window.__ModuleLoader__.load({
 			'note.provider': '{provider}：',
 			'settings.tab': '会话花费',
 			'settings.title': '会话花费价目',
+			'settings.brief': '按供应商与模型编辑单价，随 DSH 的模型目录自动同步',
 			'settings.desc': '按 DSH 当前注册的模型与供应商配置单价（¥ / 百万 tokens）。保存后立即生效，无需重启。未单独配置的模型沿用所在供应商的默认档。',
 			'settings.loading': '正在读取价目…',
 			'settings.hostMissing': '读不到价目接口：宿主半尚未加载。升级或修改过宿主代码后，重启 DSH 再打开本页。',
@@ -137,6 +141,7 @@ window.__ModuleLoader__.load({
 			'note.provider': '{provider}: ',
 			'settings.tab': 'Session cost',
 			'settings.title': 'Session cost price book',
+			'settings.brief': 'Edit per-provider and per-model rates; rows follow the models DSH has registered',
 			'settings.desc': 'Prices per 1M tokens (¥), one row per model DSH currently registers. Saving applies immediately — no restart. A model without its own row bills at its provider default.',
 			'settings.loading': 'Reading the price book…',
 			'settings.hostMissing': 'The price API is unavailable: the Host half is not loaded yet. After changing Host code, restart DSH and reopen this page.',
@@ -220,6 +225,7 @@ window.__ModuleLoader__.load({
 			'.scost-settingsHead{display:flex;flex-direction:column;gap:4px}',
 			'.scost-settingsTitle{color:var(--dsw-alias-label-primary);font-size:14px;font-weight:600}',
 			'.scost-settingsDesc{max-width:760px}',
+			'.scost-brief{color:var(--dsw-alias-label-secondary);font-size:12px;line-height:18px}',
 			'.scost-card{border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:12px 14px;display:flex;flex-direction:column;gap:10px}',
 			'.scost-cardHead{display:flex;align-items:center;gap:8px;justify-content:space-between;flex-wrap:wrap}',
 			'.scost-cardName{color:var(--dsw-alias-label-primary);font-weight:600;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden;text-overflow:ellipsis}',
@@ -795,8 +801,17 @@ window.__ModuleLoader__.load({
 			return Array.isArray(value) ? value.join(', ') : ''
 		}
 
-		/** The price-book editor rendered inside Settings → Plugins. */
-		function TariffSettings() {
+		/**
+		 * The price-book editor.
+		 *
+		 * `props.view === 'summary'` asks for the one-liner a row or a bundle page
+		 * renders inline; anything else is the full page. `props.embedded` drops the
+		 * editor's own title block because the surrounding page already heads the
+		 * entry with the plugin's display title and description.
+		 */
+		function TariffSettings(props) {
+			const view = props !== null && typeof props === 'object' && props.view === 'summary' ? 'summary' : 'page'
+			const embedded = props !== null && typeof props === 'object' && props.embedded === true
 			const [state, setState] = React.useState(null)
 			const [draft, setDraft] = React.useState({})
 			const [version, setVersion] = React.useState(0)
@@ -832,8 +847,10 @@ window.__ModuleLoader__.load({
 			}, [adopt])
 
 			React.useEffect(() => {
-				load()
-			}, [load])
+				// A summary view is the one-liner the Plugins page shows on listing rows;
+				// it must not read the Host API, so the form only loads on a page.
+				if (view === 'page') load()
+			}, [load, view])
 
 			const commit = (next) => {
 				setDraft(next)
@@ -1059,9 +1076,18 @@ window.__ModuleLoader__.load({
 					h('div', { className: PREFIX + '-grid' }, head.concat(bookRow, rows)))
 			}
 
-			const header = h('div', { className: PREFIX + '-settingsHead', key: 'head' },
-				h('div', { className: PREFIX + '-settingsTitle' }, t('settings.title')),
-				h('div', { className: PREFIX + '-settingsDesc' }, t('settings.desc')))
+			const header = embedded
+				? null
+				: h('div', { className: PREFIX + '-settingsHead', key: 'head' },
+					h('div', { className: PREFIX + '-settingsTitle' }, t('settings.title')),
+					h('div', { className: PREFIX + '-settingsDesc' }, t('settings.desc')))
+
+			if (view === 'summary') {
+				// The Plugins page asks every configurable row for its one-liner; it must
+				// not mount the form or touch the Host API. The rates it would show are
+				// inherited from the provider book, so the summary stays static.
+				return h('div', { className: PREFIX + '-brief' }, t('settings.brief'))
+			}
 
 			if (state === null) {
 				return h('div', { className: PREFIX + '-settings' },
@@ -1173,7 +1199,7 @@ window.__ModuleLoader__.load({
 				? h('div', { className: PREFIX + '-hint', key: 'warnings' }, t('settings.warnings') + warnings.join(' · '))
 				: null
 
-			const body = [header]
+			const body = header === null ? [] : [header]
 			if (warningBlock !== null) body.push(warningBlock)
 			if (empty !== null) body.push(empty)
 			for (const card of cards) body.push(card)
@@ -1182,6 +1208,17 @@ window.__ModuleLoader__.load({
 			body.push(footer)
 
 			return h('div', { className: PREFIX + '-settings', key: 'v' + version }, body)
+		}
+
+		/**
+		 * The Plugins-page cell: the Host hands a keyed config cell the view it asks
+		 * for (`summary` on a list row, `page` on the row's or the bundle's page) and,
+		 * for entries with a Config schema, a `form` with the Host-owned values.
+		 * This plugin has no Config schema (its books live in a plain YAML `config`),
+		 * so the form is ignored and the editor talks to its own Host API instead.
+		 */
+		function TariffConfigCell(props) {
+			return h(TariffSettings, { view: props !== null && typeof props === 'object' ? props.view : undefined, embedded: true })
 		}
 
 		return {
@@ -1205,6 +1242,17 @@ window.__ModuleLoader__.load({
 					order: 30,
 					label: () => fallbackT('settings.tab')
 				}, TariffSettings))
+				// The two places people actually look: this bundle's page in the Plugins
+				// page (keyed by package name) and the configure control on the
+				// `session-tariff` row it declares (keyed by `<package>#<row id>`).
+				ctx.slots.inject('plugins.bundle.config', () => ctx.slots.register({
+					name: 'plugins.bundle.config',
+					key: PKG_NAME
+				}, TariffConfigCell))
+				ctx.slots.inject('plugins.row.config', () => ctx.slots.register({
+					name: 'plugins.row.config',
+					key: PKG_NAME + '#' + ROW_ID
+				}, TariffConfigCell))
 			}
 		}
 	}

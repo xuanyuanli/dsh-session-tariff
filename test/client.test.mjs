@@ -75,6 +75,19 @@ function mount(React, Component) {
 		}
 	}
 
+	/**
+	 * Expand function components the way React would, so a cell that wraps the
+	 * editor (as the Plugins page cells do) renders through to host elements.
+	 * Hook order stays deterministic because expansion is depth-first.
+	 */
+	function expand(node) {
+		if (node === null || node === undefined || typeof node !== 'object') return node
+		if (Array.isArray(node)) return node.map(expand)
+		if (typeof node.type === 'function') return expand(node.type(node.props))
+		if (!node.children) return node
+		return { type: node.type, props: node.props, children: node.children.map(expand) }
+	}
+
 	function render() {
 		cursor = 0
 		const effects = []
@@ -139,7 +152,7 @@ function mount(React, Component) {
 		globalThis.__reactRender = { nextSlot, useState, useEffect, useCallback, useMemo, useRef, useId }
 
 		const result = Component()
-		tree = result
+		tree = expand(result)
 		runEffects(effects)
 		return tree
 	}
@@ -341,6 +354,40 @@ test('registers a settings tab next to the composer pill', () => {
 	plugin.setLocale('en')
 	// Labels are thunks re-read on every projection, so a locale switch follows.
 	assert.equal(entry.options.label(), 'Session cost')
+})
+
+test('the editor is also reachable from the Plugins page: bundle cell and row cell', async () => {
+	const fetchStub = fakeFetch(descriptor())
+	const plugin = loadPlugin({ fetch: fetchStub.impl })
+	const byName = (name) => plugin.registered.filter((item) => item.options.name === name)
+	const bundle = byName('plugins.bundle.config')
+	assert.equal(bundle.length, 1, 'bundle page cell is registered')
+	assert.equal(bundle[0].options.key, 'dsh-session-tariff')
+	const row = byName('plugins.row.config')
+	assert.equal(row.length, 1, 'row configure cell is registered')
+	assert.equal(row[0].options.key, 'dsh-session-tariff#session-tariff')
+
+	// The Plugins page first asks a row for its one-liner; it must not mount the
+	// form, and therefore must not read the Host API.
+	const summary = mount(plugin.React, () => bundle[0].component({ view: 'summary' }))
+	summary.render()
+	await summary.flush()
+	const summaryText = textOf(summary.tree)
+	assert.match(summaryText, /随 DSH 的模型目录自动同步/)
+	assert.equal(byClass(summary.tree, 'scost-settings').length, 0, 'no form in summary view')
+	assert.equal(byClass(summary.tree, 'scost-brief').length, 1)
+	assert.equal(fetchStub.calls.length, 0, 'summary view does not fetch')
+	summary.unmount()
+
+	// The page view renders the editor without its own title block, because the
+	// Plugins page already heads the entry with the plugin's display title.
+	const page = mount(plugin.React, () => row[0].component({ view: 'page' }))
+	page.render()
+	await page.flush()
+	assert.equal(byClass(page.tree, 'scost-settingsHead').length, 0, 'no duplicated page header')
+	assert.match(textOf(page.tree), /brand-new-model/)
+	assert.equal(fetchStub.calls.length, 1, 'page view reads the Host state once')
+	page.unmount()
 })
 
 test('renders one row per live model, with the inherited rate as placeholder', async () => {

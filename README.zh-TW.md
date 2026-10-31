@@ -38,7 +38,7 @@ Peak hours are workdays 09:00-12:00 / 14:00-18:00; every other hour, weekends an
 
 - 膠囊統計的是整個工作階段紀錄（不是目前視窗），口徑與旁邊的 token 統計一致
 - 依 provider 計價：`deepseek-account`（DeepSeek 官方）與 `bailian` / `bailian-chat`（阿里雲百煉）內建價目表與時段規則，開箱即用；也可以用 `config.providers` 逐 provider 覆寫
-- **價目在 GUI 裡改**：設定 → 外掛 → 工作階段花費，列隨 DSH 註冊的 provider / 模型自動產生，改完儲存立即生效（寫入 profile 的 `cordis.patch.yml`，不用重新啟動）
+- **價目在 GUI 裡改**：設定 → 外掛 → dsh-session-tariff（或內建外掛分頁的「工作階段花費」），列隨 DSH 註冊的 provider / 模型自動產生，改完儲存立即生效（寫入 profile 的 `cordis.patch.yml`，不用重新啟動）
 - 依時段分組：某個時段沒用過就不顯示那一列
 - 每個時段列出請求次數，以及四個用量桶的 token 數與分攤金額
 - 底部註明目前生效的兩段單價與尖峰時段規則
@@ -125,9 +125,9 @@ git clone https://github.com/xuanyuanli/dsh-session-tariff.git
 
 ## 設定
 
-### 在 GUI 裡改價目：設定 → 外掛 → 工作階段花費
+### 在 GUI 裡改價目：設定 → 外掛 → dsh-session-tariff
 
-裝好之後不用改任何 YAML：開啟 **設定 → 外掛**，切到 **工作階段花費** 分頁，那就是價目表的編輯器。
+裝好之後不用改任何 YAML。開啟 **設定 → 外掛**，打開本外掛（`dsh-session-tariff`）的頁面，說明下方就是 **工作階段花費價目** 編輯區；`session-tariff` 這一列右側也有「設定」按鈕，點開是同一份編輯器的整頁版本。**設定 → 內建外掛** 裡另有 **工作階段花費** 分頁，內容相同——三個入口指向同一份價目。
 
 - **列來自 DSH 自己**：頁面從宿主讀到 DSH 目前註冊的 provider 與模型（`ctx.llm.listProviders()` / `listModels()`），一個模型一列。**新增 provider 或模型，重新讀取就多一列**，預設費率已按「內建預設 → 供應商預設檔 → 備援價目」的順序填好，留空即沿用；**刪掉模型，那一列就不再出現**，它殘留的設定會歸到「已失效的設定」裡，一鍵清除即可。
 - **改哪一格就只覆蓋那一格**：輸入框有內容 = 該格明確計價；清空輸入框 = 恢復繼承（不是寫 0）。每列右邊「恢復預設」清掉該列；供應商卡片右上角「清除此供應商全部覆蓋」清掉整塊。

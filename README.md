@@ -38,7 +38,7 @@
 
 - 胶囊显示本会话（整个日志，不是当前窗口）的估算花费，口径与旁边的 token 统计一致
 - 按 provider 计价：`deepseek-account`（DeepSeek 官方）与 `bailian` / `bailian-chat`（阿里云百炼）内置价目表和时段规则，开箱即用；也可以用 `config.providers` 逐 provider 覆盖
-- **价目在 GUI 里改**：设置 → 插件 → 会话花费，行随 DSH 注册的 provider / 模型自动生成，改完保存立即生效（写入 profile 的 `cordis.patch.yml`，不用重启）
+- **价目在 GUI 里改**：设置 → 插件 → dsh-session-tariff（或内置插件页的「会话花费」标签），行随 DSH 注册的 provider / 模型自动生成，改完保存立即生效（写入 profile 的 `cordis.patch.yml`，不用重启）
 - 按时段分组：只在某个时段用过量就只显示那一档
 - 每个时段给出请求次数与四个用量桶的 token 数、分摊金额
 - 底部注明当前生效的两档单价与时段规则
@@ -125,9 +125,9 @@ git clone https://github.com/xuanyuanli/dsh-session-tariff.git
 
 ## 配置
 
-### 在 GUI 里改价目：设置 → 插件 → 会话花费
+### 在 GUI 里改价目：设置 → 插件 → dsh-session-tariff
 
-装好之后不用改任何 YAML：打开 **设置 → 插件**，切到 **会话花费** 标签页，就是这本价目表的编辑器。
+装好之后不用改任何 YAML。打开 **设置 → 插件**，在本插件（`dsh-session-tariff`）的页面上，描述下面就是 **会话花费价目** 编辑区；`session-tariff` 这一行右侧还有一个「配置」按钮，点开是同一份编辑器的整页版本。**设置 → 内置插件** 里另有 **会话花费** 标签页，内容相同——三个入口指向同一份价目。
 
 - **行来自 DSH 自己**：页面从宿主读到 DSH 当前注册的 provider 与模型（`ctx.llm.listProviders()` / `listModels()`），一个模型一行。**新增 provider 或模型，刷新页面就多一行**，默认费率已经按「内置预设 → 供应商默认档 → 兜底价目」的顺序填好，留空即沿用；**删掉模型，那一行就不再出现**，它残留的配置会归到「已失效的配置」里，一键清除即可。
 - **改哪一格就只覆盖那一格**：输入框有内容 = 该格显式定价；清空输入框 = 恢复继承（不是写 0）。每行右边「恢复默认」清掉该行；供应商卡片右上角「清除本供应商全部覆盖」清掉整块。
@@ -306,7 +306,7 @@ const DEFAULT_PRICING = {
 - 价目编辑器测试（`npm test`，三个文件、28 个用例，无外部依赖）：
 
   - [test/editor.test.mjs](test/editor.test.mjs) 覆盖宿主半：`liveCatalog` 列出实时 provider / 模型并按 id 排序、单个 provider 取模型失败时只记一条 warning 并保留该 provider、`describeState` 的下标（预设 / 配置 / 兜底）与 `defaults` / `stale`、`sanitizeConfig` 的接受与拒绝（未知字段、负数、坏的时间窗与日期、`__proto__` / `constructor` 污染键、空行裁剪）、`plainConfig` 解包、以及**通过真实 `apply()` 装出来的**路由：`GET /state`、`POST /save`（经 `configEditor.edit` 落盘并回新 state）、非法草稿不写盘、跨站与表单提交被 403、没有可写行时给出说明、未知路径 404。
-  - [test/client.test.mjs](test/client.test.mjs) 在 `vm` 里加载 `client.js`，用一套极小的 React shim 真正渲染设置页，再把 `onChange` / `onClick` 打进去，断言：模型行随目录生成、留空格显示继承值作为 placeholder、改一格后 POST 的 body 恰好只有那一格、清空输入框是**删除覆盖**而不是写 0、失效项一键清除、宿主半缺失 / 只读部署的提示、四种按钮状态，以及中英两份词典覆盖页面用到的每个 key。
+  - [test/client.test.mjs](test/client.test.mjs) 在 `vm` 里加载 `client.js`，用一套极小的 React shim 真正渲染设置页，再把 `onChange` / `onClick` 打进去，断言：模型行随目录生成、留空格显示继承值作为 placeholder、改一格后 POST 的 body 恰好只有那一格、清空输入框是**删除覆盖**而不是写 0、失效项一键清除、宿主半缺失 / 只读部署的提示、四种按钮状态、三个入口（插件页 bundle 单元、行配置单元、内置插件标签页）各自注册到位且 `view: 'summary'` 只渲染一句话不发请求，以及中英两份词典覆盖页面用到的每个 key。
   - 运行方式：`npm test`（等价于 `node --test test/fold.test.mjs test/editor.test.mjs test/client.test.mjs`）。
 
 - 运行时对账：某个 `deepseek-flash` 会话（144 次请求）的 `sessionCost` 两档合计与同会话 `tokenUsage` 合计**逐项相等**——缓存读取 17,137,024 / 未缓存输入 131,962 / 输出 87,763——说明既没有重复计费也没有漏计。

@@ -38,7 +38,7 @@ Peak hours are workdays 09:00-12:00 / 14:00-18:00; every other hour, weekends an
 
 - The pill prices the whole session log, not the current window, matching the token stats next to it
 - Provider-aware pricing: built-in price books and period rules for `deepseek-account` (DeepSeek official) and `bailian` / `bailian-chat` (Alibaba Cloud Bailian) work out of the box, and `config.providers` overrides them per provider
-- **Prices are editable in the GUI**: Settings → Plugins → Session cost; rows follow the providers and models DSH has registered, and saving applies immediately (written to the profile's `cordis.patch.yml`, no restart)
+- **Prices are editable in the GUI**: Settings → Plugins → dsh-session-tariff (or the Session cost tab under Built-in plugins); rows follow the providers and models DSH has registered, and saving applies immediately (written to the profile's `cordis.patch.yml`, no restart)
 - Grouped by tariff period: a period that was never used is not listed
 - Each period reports its request count plus tokens and allocated money for all four usage buckets
 - The footer states the two unit-price sets and the peak-hour rule currently in effect
@@ -125,9 +125,9 @@ Uninstall: `plugin_manager remove_bundle dsh-session-tariff` (or `dsh plugin rem
 
 ## Configuration
 
-### Edit prices in the GUI: Settings → Plugins → Session cost
+### Edit prices in the GUI: Settings → Plugins → dsh-session-tariff
 
-Once installed, no YAML is needed: open **Settings → Plugins** and switch to the **Session cost** tab — that page is the price-book editor.
+Once installed, no YAML is needed. Open **Settings → Plugins**, open this plugin (`dsh-session-tariff`), and the **Session cost price book** editor sits right under its description; the `session-tariff` row also grows a configure control that opens the same editor as a full page. **Settings → Built-in plugins** carries a **Session cost** tab with the same content — three entry points, one price book.
 
 - **Rows come from DSH itself.** The page reads the providers and models DSH currently registers (`ctx.llm.listProviders()` / `listModels()`) and renders one row per model. **Add a provider or model and the row appears on the next read**, with its default already filled in from "built-in preset → provider default row → fallback book"; leave a cell empty and it keeps inheriting. **Remove a model and its row disappears**; any configuration left behind is listed under "Stale configuration" and can be dropped in one click.
 - **Editing a cell overrides only that cell.** A filled input is an explicit price; clearing it restores inheritance (it does not write 0). "Reset" on a row clears that row; "Clear every override for this provider" on a card clears the whole block.
